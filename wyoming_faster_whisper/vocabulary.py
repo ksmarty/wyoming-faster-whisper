@@ -25,8 +25,13 @@ priority order and cut off at a budget:
   4. the remaining entity names -- in a big home mostly sensors, which are
      hundreds in number and usually asked about by area ("the temperature in the
      office") rather than by their own name
-  5. entity aliases -- alternate phrasings, valuable but redundant with (2)/(4),
-     and ordered to follow their entity's tier
+
+Aliases are not a tier. An alias exists precisely because it is what the speaker
+says *instead of* the name the integration gave the thing, so it is at least as
+likely to be spoken as the name it replaces -- ranking every alias below every
+name drops the very words biasing exists to catch. Each one sits with the name
+it belongs to, so truncation cuts whole things rather than stranding a name
+whose spoken form was thrown away.
 
 Truncation is deliberate and deterministic: fill in that order, stop at the
 first name that would not fit, and log what was dropped. No scoring, no
@@ -93,9 +98,10 @@ class RecognitionContext:
     """The names from one snapshot of Home Assistant, in priority order.
 
     Each field is one tier of the order documented at the top of this module,
-    highest first; ``hass_api`` decides which name lands in which. Floors are
-    grouped with areas -- they are the same kind of name to a speaker, and there
-    are only ever a handful of them.
+    highest first; ``hass_api`` decides which name lands in which, and puts each
+    alias directly behind the name it belongs to. Floors are grouped with areas
+    -- they are the same kind of name to a speaker, and there are only ever a
+    handful of them.
 
     A new snapshot is a new instance, so the prompt cache below dies with the
     names it was built from.
@@ -113,8 +119,6 @@ class RecognitionContext:
     # Every other exposed entity.
     other_entities: List[str] = field(default_factory=list)
 
-    aliases: List[str] = field(default_factory=list)
-
     # Cached by (prefix, budget, tokenizer). Building the prompt costs one
     # tokenizer call per name, and the same prompt is reused for every utterance
     # until the names change.
@@ -129,7 +133,6 @@ class RecognitionContext:
             self.priority_entities,
             self.empty_areas,
             self.other_entities,
-            self.aliases,
         )
 
     def __bool__(self) -> bool:
@@ -138,7 +141,6 @@ class RecognitionContext:
             or self.priority_entities
             or self.empty_areas
             or self.other_entities
-            or self.aliases
         )
 
     def whisper_prompt(

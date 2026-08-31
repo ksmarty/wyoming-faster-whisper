@@ -81,7 +81,11 @@ order and cut off when it runs out:
 4. **The remaining entity names** — in a big home mostly sensors, which are
    hundreds in number and usually asked about by area ("the temperature in the
    office") rather than by their own name.
-5. **Aliases**, ordered to follow their entity's tier.
+
+Aliases are not a tier of their own. An alias is what you say *instead of* the
+name the integration gave the thing, so each one sits directly behind the name it
+belongs to and shares its tier — a light's "standing light" is kept or dropped
+along with the light, never left out while lower-priority names get in.
 
 Edit `PRIORITY_DOMAINS` in `wyoming_faster_whisper/hass_api.py` to change what
 lands in tier 2. Run with `--debug` to see how many names were dropped and the

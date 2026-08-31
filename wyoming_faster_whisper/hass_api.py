@@ -44,23 +44,13 @@ Command = Callable[[Dict[str, Any]], Coroutine[Any, Any, Dict[str, Any]]]
 # truncation.
 PRIORITY_DOMAINS = frozenset(
     {
-        # Named in the great majority of spoken commands.
         "light",
         "switch",
         "fan",
         "media_player",
         "climate",
-        "cover",
-        "lock",
-        # Addressable *only* by name. "Run movie night" or "add hot dogs to my
-        # shopping list" has no area or domain to fall back on, so mishearing
-        # the name loses the command outright.
         "scene",
-        "script",
         "todo",
-        # Usually given a personal name ("Rosie"), which is exactly the kind of
-        # rare proper noun the model has never seen.
-        "vacuum",
     }
 )
 
@@ -256,41 +246,35 @@ class HomeAssistant:
             if area.get("floor_id") and (area.get("area_id") in used_area_ids)
         }
 
-        # Aliases follow their entity's tier, so a priority entity's alternate
-        # phrasing outlives a sensor's.
-        by_tier = sorted(entities, key=lambda entity: not entity.is_priority)
-
         context = RecognitionContext(
             used_areas=clean_names(
                 _place_names(areas, "area_id", used_area_ids, in_use=True),
                 _place_names(floors, "floor_id", used_floor_ids, in_use=True),
             ),
             priority_entities=clean_names(
-                entity.name for entity in entities if entity.name and entity.is_priority
+                _entity_names(entity for entity in entities if entity.is_priority)
             ),
             empty_areas=clean_names(
                 _place_names(areas, "area_id", used_area_ids, in_use=False),
                 _place_names(floors, "floor_id", used_floor_ids, in_use=False),
             ),
             other_entities=clean_names(
-                entity.name
-                for entity in entities
-                if entity.name and not entity.is_priority
-            ),
-            aliases=clean_names(
-                alias for entity in by_tier for alias in entity.aliases
+                _entity_names(entity for entity in entities if not entity.is_priority)
             ),
         )
         # One line per fetch: this runs once per utterance, so anything per-entity
-        # here would bury the rest of the log.
+        # here would bury the rest of the log. Aliases are counted separately
+        # even though they are folded into the tiers, because "the alias I added
+        # is not in the prompt" is the question this log has to answer.
         _LOGGER.debug(
             "Loaded names from Home Assistant: %s areas in use, %s priority "
-            "entities, %s empty areas, %s other entities, %s aliases%s",
+            "entity names, %s empty areas, %s other entity names "
+            "(%s aliases included)%s",
             len(context.used_areas),
             len(context.priority_entities),
             len(context.empty_areas),
             len(context.other_entities),
-            len(context.aliases),
+            sum(len(entity.aliases) for entity in entities),
             (
                 f" (skipped {len(unnamed)} unnamed: {', '.join(unnamed)})"
                 if unnamed
@@ -298,6 +282,25 @@ class HomeAssistant:
             ),
         )
         return context
+
+
+def _entity_names(entities: Iterable[_Entity]) -> List[str]:
+    """Each entity's name followed by its aliases.
+
+    Keeping them adjacent means the budget cuts whole entities: it can never
+    keep "Floor Lamp" while dropping the "standing light" the speaker actually
+    says.
+    """
+    names: List[str] = []
+    for entity in entities:
+        if entity.name:
+            names.append(entity.name)
+
+        # An unnamed entity can still have an alias, and that alias is then the
+        # only way to say it.
+        names.extend(entity.aliases)
+
+    return names
 
 
 def _place_names(

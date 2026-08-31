@@ -47,14 +47,15 @@ def test_clean_names_tolerates_none_groups():
 def test_all_names_follows_the_tier_order():
     context = _context(
         used_areas=["Office"],
-        priority_entities=["Office Lamp"],
+        # hass_api folds each alias in behind its own name.
+        priority_entities=["Office Lamp", "Desk Lamp"],
         empty_areas=["Garage"],
-        other_entities=["Ecobee"],
-        aliases=["Thermostat"],
+        other_entities=["Ecobee", "Thermostat"],
     )
     assert context.all_names() == [
         "Office",
         "Office Lamp",
+        "Desk Lamp",
         "Garage",
         "Ecobee",
         "Thermostat",
@@ -177,7 +178,7 @@ def test_equality_ignores_the_prompt_cache():
 
 def test_context_is_falsey_when_empty():
     assert not _context()
-    assert _context(aliases=["Thermostat"])
+    assert _context(other_entities=["Thermostat"])
 
 
 @pytest.mark.parametrize("text", ["", "a", "Ecobee", "Living Room Lamp" * 20])

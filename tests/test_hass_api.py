@@ -157,16 +157,47 @@ async def test_names_are_sorted_into_priority_tiers():
     # The office holds both exposed entities -- the lamp through its device, the
     # Ecobee directly -- which also puts the floor it is on in the top tier.
     assert context.used_areas == ["Office", "Study", "Upstairs", "Top Floor"]
-    assert context.priority_entities == ["Office Lamp"]
+
+    # Each alias rides along with the name it belongs to.
+    assert context.priority_entities == ["Office Lamp", "Desk Lamp"]
 
     # The kitchen's only entity is disabled, and nothing is on its floor.
     assert context.empty_areas == ["Kitchen", "Downstairs"]
 
     # A sensor is asked about by area far more often than by name.
-    assert context.other_entities == ["Ecobee"]
+    assert context.other_entities == ["Ecobee", "Thermostat"]
 
-    # Aliases follow their entity's tier: the lamp's before the sensor's.
-    assert context.aliases == ["Desk Lamp", "Thermostat"]
+
+async def test_an_alias_outranks_a_lower_tier_name():
+    """An alias is what the speaker says, so it cannot rank below every name."""
+    hass, server = await _client(_app())
+    try:
+        context = await hass.get_context()
+    finally:
+        await server.close()
+
+    names = context.all_names()
+    assert names.index("Desk Lamp") < names.index("Kitchen")
+
+
+async def test_an_unnamed_entity_still_contributes_its_alias():
+    entries = {
+        "light.office_lamp": {"aliases": ["Standing Light"], "disabled_by": None}
+    }
+    states = [{"entity_id": "light.office_lamp", "attributes": {}}]
+    results = {
+        **_RESULTS,
+        "get_states": states,
+        "config/entity_registry/get_entries": entries,
+    }
+
+    hass, server = await _client(_app(results=results))
+    try:
+        context = await hass.get_context()
+    finally:
+        await server.close()
+
+    assert context.priority_entities == ["Standing Light"]
 
 
 async def test_the_device_registry_is_only_fetched_when_an_entity_needs_it():
@@ -214,8 +245,8 @@ async def test_the_prompt_is_built_from_a_live_fetch():
 
     prompt = context.whisper_prompt(lambda text: len(text.split()), max_tokens=1000)
     assert prompt == (
-        "Office, Study, Upstairs, Top Floor, Office Lamp, "
-        "Kitchen, Downstairs, Ecobee, Desk Lamp, Thermostat."
+        "Office, Study, Upstairs, Top Floor, Office Lamp, Desk Lamp, "
+        "Kitchen, Downstairs, Ecobee, Thermostat."
     )
 
 
