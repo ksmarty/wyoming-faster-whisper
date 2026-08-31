@@ -169,31 +169,6 @@ Notes and limits:
 - **`--stt-library sherpa` runs on the CPU even in this image.** A CUDA
   sherpa-onnx build exists, but sherpa-onnx bundles its own onnxruntime, and two
   CUDA-enabled onnxruntime builds in one process segfault — which
-  `--stt-library auto` can reach, since English routes to sherpa and Russian to
-  onnx-asr. sherpa's default Parakeet models are int8, where the CUDA provider
-  has to partition around the quantization nodes and gains little, so the CPU
-  wheel is the better half of that trade. The server logs a warning when
-  `--device cuda` is used with a sherpa build that has no CUDA support.
-- **The GPU is not always the faster choice.** For short voice commands the
-  small CPU models are already well under the time it takes to speak the
-  command, and the int4/int8 quantized backends get much of their speed from
-  quantization rather than raw FLOPs. The clear wins are large Whisper models
-  and long-form audio.
-- **VAD stays on the CPU.** It is a few million operations per utterance; moving
-  it would cost more in transfers than it saves.
-
-To use a GPU without Docker, install the GPU wheels into your own environment —
-`torch` from the `cu126` index, and the `onnx-asr-gpu`/`qwen3-asr-gpu` extras
-instead of `onnx-asr`/`qwen3-asr` — then pass `--device cuda`. See
-[Dockerfile.gpu](Dockerfile.gpu) for the exact commands and the two pins that
-matter:
-
-- `onnxruntime` and `onnxruntime-gpu` cannot coexist (same module), and
-  faster-whisper depends on the CPU one — so it has to be removed and
-  `onnxruntime-gpu` reinstalled after everything else.
-- `onnxruntime-gpu` moved to CUDA 13 in 1.27.0. On a CUDA 12 runtime, pin
-  `<1.27` or the CUDA provider fails to load and every session quietly falls
-  back to the CPU.
 
 If `--device cuda` produces no speedup, check the log: the server warns when the
 installed onnxruntime or sherpa-onnx build has no usable CUDA support.
