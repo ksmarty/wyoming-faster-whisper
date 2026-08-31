@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Union
 import faster_whisper
 
 from .const import Transcriber
+from .device import ctranslate2_device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,12 +29,20 @@ class FasterWhisperTranscriber(Transcriber):
         self.vad_parameters = vad_parameters
         self.task = task
 
+        # CTranslate2 takes the GPU ordinal separately, so "cuda:1" has to be
+        # split into device + device_index.
+        ct2_device, ct2_device_index = ctranslate2_device(device)
+        extra_args: Dict[str, Any] = {}
+        if ct2_device_index is not None:
+            extra_args["device_index"] = ct2_device_index
+
         self.model = faster_whisper.WhisperModel(
             model_id,
             download_root=str(cache_dir),
-            device=device,
+            device=ct2_device,
             compute_type=compute_type,
             cpu_threads=cpu_threads,
+            **extra_args,
         )
 
     def count_prompt_tokens(self, text: str) -> Optional[int]:

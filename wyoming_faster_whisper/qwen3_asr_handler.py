@@ -44,6 +44,7 @@ from huggingface_hub import snapshot_download
 from tokenizers import Tokenizer
 
 from .const import Transcriber
+from .device import onnx_providers, warn_if_no_onnx_gpu
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -236,6 +237,7 @@ class Qwen3AsrTranscriber(Transcriber):
         cache_dir: Union[str, Path],
         local_files_only: bool = False,
         cpu_threads: int = 4,
+        device: str = "cpu",
     ) -> None:
         """Initialize model."""
         model_dir = Path(model_id)
@@ -252,14 +254,21 @@ class Qwen3AsrTranscriber(Transcriber):
         options = ort.SessionOptions()
         options.intra_op_num_threads = cpu_threads
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        # The int4 weights are MatMulNBits nodes. The CUDA provider supports
+        # them, but the quantization is where most of this model's speed comes
+        # from, so the GPU win here is smaller than for the fp32 backends.
         session_args = {
             "sess_options": options,
-            "providers": ["CPUExecutionProvider"],
+            "providers": onnx_providers(device),
         }
 
         self._encoder = ort.InferenceSession(
             str(model_dir / "encoder.int4.onnx"), **session_args
         )
+
+        # Ask the session that was actually created, not onnxruntime's advertised
+        # provider list: a CUDA provider that fails to load is still advertised.
+        warn_if_no_onnx_gpu(device, self._encoder.get_providers())
 
         self._merged: Optional[ort.InferenceSession] = None
         self._decoder_init: Optional[ort.InferenceSession] = None

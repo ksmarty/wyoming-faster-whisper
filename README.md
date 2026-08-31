@@ -133,3 +133,67 @@ docker run -it -p 10300:10300 -v /path/to/local/data:/data rhasspy/wyoming-whisp
 **NOTE**: Models are downloaded to `/data`, so make sure this points to a Docker volume.
 
 [Source](https://github.com/rhasspy/wyoming-addons/tree/master/whisper)
+
+### GPU Image
+
+The `gpu` tag runs every backend on an NVIDIA GPU. It needs the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+on the host, and `--gpus`:
+
+``` sh
+docker run -it --gpus all -p 10300:10300 -v /path/to/local/data:/data \
+    rhasspy/wyoming-whisper:gpu --language en
+```
+
+`--device cuda` is the default in this image; pass `--device cuda:1` to pick a
+GPU or `--device cpu` to fall back. The default faster-whisper model is
+`Systran/faster-whisper-small` (float16) rather than the int8 model used on the
+CPU, and a GPU can comfortably run much larger ones:
+
+``` sh
+docker run -it --gpus all -p 10300:10300 -v /path/to/local/data:/data \
+    rhasspy/wyoming-whisper:gpu --model Systran/faster-whisper-large-v3 --language en
+```
+
+Notes and limits:
+
+- **NVIDIA and amd64 only.** CTranslate2, which faster-whisper is built on, has
+  no ROCm or Intel XPU backend and publishes no arm64 CUDA wheel. The
+  torch-based backends (`--stt-library transformers`, `--stt-library funasr`)
+  would work on ROCm or XPU, but that would be a different image, not this tag.
+- **The image is large** (~11 GB, mostly the CUDA torch wheel and the sherpa
+  CUDA provider) versus ~1.6 GB for the CPU image. Don't pull it onto a Pi by
+  accident.
+- **Home Assistant OS provides no GPU passthrough**, so this tag is for
+  standalone Docker/Compose users rather than the add-on.
+- **`--stt-library sherpa` runs on the CPU even in this image.** A CUDA
+  sherpa-onnx build exists, but sherpa-onnx bundles its own onnxruntime, and two
+  CUDA-enabled onnxruntime builds in one process segfault — which
+  `--stt-library auto` can reach, since English routes to sherpa and Russian to
+  onnx-asr. sherpa's default Parakeet models are int8, where the CUDA provider
+  has to partition around the quantization nodes and gains little, so the CPU
+  wheel is the better half of that trade. The server logs a warning when
+  `--device cuda` is used with a sherpa build that has no CUDA support.
+- **The GPU is not always the faster choice.** For short voice commands the
+  small CPU models are already well under the time it takes to speak the
+  command, and the int4/int8 quantized backends get much of their speed from
+  quantization rather than raw FLOPs. The clear wins are large Whisper models
+  and long-form audio.
+- **VAD stays on the CPU.** It is a few million operations per utterance; moving
+  it would cost more in transfers than it saves.
+
+To use a GPU without Docker, install the GPU wheels into your own environment —
+`torch` from the `cu126` index, and the `onnx-asr-gpu`/`qwen3-asr-gpu` extras
+instead of `onnx-asr`/`qwen3-asr` — then pass `--device cuda`. See
+[Dockerfile.gpu](Dockerfile.gpu) for the exact commands and the two pins that
+matter:
+
+- `onnxruntime` and `onnxruntime-gpu` cannot coexist (same module), and
+  faster-whisper depends on the CPU one — so it has to be removed and
+  `onnxruntime-gpu` reinstalled after everything else.
+- `onnxruntime-gpu` moved to CUDA 13 in 1.27.0. On a CUDA 12 runtime, pin
+  `<1.27` or the CUDA provider fails to load and every session quietly falls
+  back to the CPU.
+
+If `--device cuda` produces no speedup, check the log: the server warns when the
+installed onnxruntime or sherpa-onnx build has no usable CUDA support.
