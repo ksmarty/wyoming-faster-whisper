@@ -172,7 +172,7 @@ class Handler(DispatchEventHandler):
 
 
 def _names(*entities) -> RecognitionContext:
-    return RecognitionContext(entities=list(entities))
+    return RecognitionContext(priority_entities=list(entities))
 
 
 def _handler(transcriber, names=None, initial_prompt=None) -> Handler:

@@ -9,13 +9,19 @@ Only *conversation-exposed* entities are collected. Every entity in the house
 would put hundreds of names the speaker cannot mean into a prompt with room for
 a few dozen, crowding out the ones they can.
 
+Even so, an exposed home can overrun the prompt budget on its own, so the names
+are also sorted into the priority tiers of a
+[RecognitionContext](vocabulary.py): which area holds something exposed, and
+which domain an entity belongs to, are both known only here.
+
 Requires the ``hass`` extra (aiohttp).
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Coroutine, Dict, List, Set
+from dataclasses import dataclass, field
+from typing import Any, Callable, Coroutine, Dict, Iterable, List, Optional, Set
 from urllib.parse import urlparse, urlunparse
 
 import aiohttp
@@ -26,6 +32,55 @@ from .vocabulary import RecognitionContext, clean_names
 _LOGGER = logging.getLogger(__name__)
 
 Command = Callable[[Dict[str, Any]], Coroutine[Any, Any, Dict[str, Any]]]
+
+# Domains whose entities get named out loud, and whose names are therefore the
+# ones worth spending prompt budget on. Everything else falls to a lower tier --
+# in practice that is mostly ``sensor``/``binary_sensor``, which a large home
+# exposes by the hundred and which are usually asked about by area ("what's the
+# temperature in the office") rather than by their own name.
+#
+# Membership is the whole heuristic; order within the set is irrelevant. Moving
+# a domain in or out of here is the one knob for tuning what survives
+# truncation.
+PRIORITY_DOMAINS = frozenset(
+    {
+        # Named in the great majority of spoken commands.
+        "light",
+        "switch",
+        "fan",
+        "media_player",
+        "climate",
+        "cover",
+        "lock",
+        # Addressable *only* by name. "Run movie night" or "add hot dogs to my
+        # shopping list" has no area or domain to fall back on, so mishearing
+        # the name loses the command outright.
+        "scene",
+        "script",
+        "todo",
+        # Usually given a personal name ("Rosie"), which is exactly the kind of
+        # rare proper noun the model has never seen.
+        "vacuum",
+    }
+)
+
+
+@dataclass
+class _Entity:
+    """One exposed entity, reduced to what the tiers are decided from."""
+
+    entity_id: str
+    name: str = ""
+    aliases: List[str] = field(default_factory=list)
+    area_id: Optional[str] = None
+
+    @property
+    def domain(self) -> str:
+        return self.entity_id.split(".", 1)[0]
+
+    @property
+    def is_priority(self) -> bool:
+        return self.domain in PRIORITY_DOMAINS
 
 
 class HomeAssistantError(Exception):
@@ -143,51 +198,98 @@ class HomeAssistant:
             )
             entries = {k: v for k, v in msg["result"].items() if v}
 
-        entity_names: List[str] = []
-        alias_names: List[str] = []
+        # An entity's area is usually its device's; only an explicit override
+        # lives on the entity itself. The device registry is the whole house, so
+        # it is only fetched when an exposed entity actually needs it.
+        device_areas: Dict[str, str] = {}
+        if any(
+            entry.get("device_id") and not entry.get("area_id")
+            for entry in entries.values()
+        ):
+            msg = await command({"type": "config/device_registry/list"})
+            device_areas = {
+                device["id"]: device["area_id"]
+                for device in msg["result"]
+                if device.get("id") and device.get("area_id")
+            }
+
+        entities: List[_Entity] = []
         unnamed: List[str] = []
         for entity_id in sorted(exposed):
             entry = entries.get(entity_id) or {}
             if entry.get("disabled_by") is not None:
+                # Disabled entities are gone from the home in every practical
+                # sense, including as evidence that their area is in use.
                 continue
 
             name = friendly.get(entity_id) or entry.get("name") or ""
             if not name:
                 name = entry.get("original_name") or ""
 
-            if name:
-                entity_names.append(name)
-            else:
+            if not name:
+                # Still counts toward its area being in use: "turn off the
+                # office" reaches it even though it has no name to bias toward.
                 unnamed.append(entity_id)
 
-            alias_names.extend(entry.get("aliases") or [])
+            entities.append(
+                _Entity(
+                    entity_id=entity_id,
+                    name=name,
+                    aliases=list(entry.get("aliases") or []),
+                    area_id=entry.get("area_id")
+                    or device_areas.get(entry.get("device_id") or ""),
+                )
+            )
 
-        area_names: List[str] = []
         msg = await command({"type": "config/area_registry/list"})
-        for area in msg["result"]:
-            area_names.append(area.get("name") or "")
-            area_names.extend(area.get("aliases") or [])
+        areas = list(msg["result"])
 
-        floor_names: List[str] = []
         msg = await command({"type": "config/floor_registry/list"})
-        for floor in msg["result"]:
-            floor_names.append(floor.get("name") or "")
-            floor_names.extend(floor.get("aliases") or [])
+        floors = list(msg["result"])
+
+        # An area earns the top tier by holding something the speaker can
+        # actually command; a floor earns it through such an area.
+        used_area_ids = {entity.area_id for entity in entities if entity.area_id}
+        used_floor_ids = {
+            area.get("floor_id")
+            for area in areas
+            if area.get("floor_id") and (area.get("area_id") in used_area_ids)
+        }
+
+        # Aliases follow their entity's tier, so a priority entity's alternate
+        # phrasing outlives a sensor's.
+        by_tier = sorted(entities, key=lambda entity: not entity.is_priority)
 
         context = RecognitionContext(
-            areas=clean_names(area_names),
-            floors=clean_names(floor_names),
-            entities=clean_names(entity_names),
-            aliases=clean_names(alias_names),
+            used_areas=clean_names(
+                _place_names(areas, "area_id", used_area_ids, in_use=True),
+                _place_names(floors, "floor_id", used_floor_ids, in_use=True),
+            ),
+            priority_entities=clean_names(
+                entity.name for entity in entities if entity.name and entity.is_priority
+            ),
+            empty_areas=clean_names(
+                _place_names(areas, "area_id", used_area_ids, in_use=False),
+                _place_names(floors, "floor_id", used_floor_ids, in_use=False),
+            ),
+            other_entities=clean_names(
+                entity.name
+                for entity in entities
+                if entity.name and not entity.is_priority
+            ),
+            aliases=clean_names(
+                alias for entity in by_tier for alias in entity.aliases
+            ),
         )
         # One line per fetch: this runs once per utterance, so anything per-entity
         # here would bury the rest of the log.
         _LOGGER.debug(
-            "Loaded names from Home Assistant: %s areas, %s floors, "
-            "%s entities, %s aliases%s",
-            len(context.areas),
-            len(context.floors),
-            len(context.entities),
+            "Loaded names from Home Assistant: %s areas in use, %s priority "
+            "entities, %s empty areas, %s other entities, %s aliases%s",
+            len(context.used_areas),
+            len(context.priority_entities),
+            len(context.empty_areas),
+            len(context.other_entities),
             len(context.aliases),
             (
                 f" (skipped {len(unnamed)} unnamed: {', '.join(unnamed)})"
@@ -198,8 +300,30 @@ class HomeAssistant:
         return context
 
 
+def _place_names(
+    records: Iterable[Dict[str, Any]],
+    id_key: str,
+    used_ids: Set[Any],
+    in_use: bool,
+) -> List[str]:
+    """Names and aliases of the areas (or floors) on one side of ``used_ids``.
+
+    Registry order is kept, so the prompt is stable across fetches.
+    """
+    names: List[str] = []
+    for record in records:
+        if (record.get(id_key) in used_ids) != in_use:
+            continue
+
+        names.append(record.get("name") or "")
+        names.extend(record.get("aliases") or [])
+
+    return names
+
+
 __all__ = [
     "HASS_API_URL",
+    "PRIORITY_DOMAINS",
     "HomeAssistant",
     "HomeAssistantError",
 ]

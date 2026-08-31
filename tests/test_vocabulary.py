@@ -44,33 +44,45 @@ def test_clean_names_tolerates_none_groups():
 # --- priority order ------------------------------------------------------
 
 
-def test_all_names_is_areas_then_floors_then_entities_then_aliases():
+def test_all_names_follows_the_tier_order():
     context = _context(
-        areas=["Office"],
-        floors=["Upstairs"],
-        entities=["Ecobee"],
+        used_areas=["Office"],
+        priority_entities=["Office Lamp"],
+        empty_areas=["Garage"],
+        other_entities=["Ecobee"],
         aliases=["Thermostat"],
     )
-    assert context.all_names() == ["Office", "Upstairs", "Ecobee", "Thermostat"]
+    assert context.all_names() == [
+        "Office",
+        "Office Lamp",
+        "Garage",
+        "Ecobee",
+        "Thermostat",
+    ]
 
 
-def test_names_repeated_across_buckets_are_only_paid_for_once():
-    context = _context(areas=["Office"], entities=["office", "Ecobee"])
+def test_names_repeated_across_tiers_are_only_paid_for_once():
+    context = _context(used_areas=["Office"], other_entities=["office", "Ecobee"])
     assert context.all_names() == ["Office", "Ecobee"]
 
 
 def test_budget_keeps_higher_priority_names_and_drops_the_rest():
-    context = _context(areas=["Office"], entities=["Ecobee", "Nanit"])
+    context = _context(used_areas=["Office"], other_entities=["Ecobee", "Nanit"])
 
     # Three words fits "Office, Ecobee," plus nothing more.
     prompt = context.whisper_prompt(_words, max_tokens=2)
     assert prompt == "Office, Ecobee."
 
 
+def test_a_priority_entity_outranks_an_area_with_nothing_in_it():
+    context = _context(priority_entities=["Office Lamp"], empty_areas=["Garage"])
+    assert context.whisper_prompt(_words, max_tokens=2) == "Office Lamp."
+
+
 def test_truncation_is_deterministic():
-    context = _context(entities=[f"Name{i}" for i in range(50)])
+    context = _context(other_entities=[f"Name{i}" for i in range(50)])
     first = context.whisper_prompt(_words, max_tokens=5)
-    second = _context(entities=[f"Name{i}" for i in range(50)]).whisper_prompt(
+    second = _context(other_entities=[f"Name{i}" for i in range(50)]).whisper_prompt(
         _words, max_tokens=5
     )
     assert first == second
@@ -80,24 +92,24 @@ def test_truncation_is_deterministic():
 
 
 def test_prompt_is_comma_joined_and_ends_with_a_period():
-    context = _context(areas=["Office", "Kitchen"])
+    context = _context(used_areas=["Office", "Kitchen"])
     assert context.whisper_prompt(_words, max_tokens=100) == "Office, Kitchen."
 
 
 def test_prefix_is_kept_verbatim_when_it_ends_in_punctuation():
-    context = _context(entities=["Ecobee"])
+    context = _context(other_entities=["Ecobee"])
     prompt = context.whisper_prompt(_words, max_tokens=100, prefix="Vocabulary:")
     assert prompt == "Vocabulary: Ecobee."
 
 
 def test_prefix_without_punctuation_becomes_its_own_sentence():
-    context = _context(entities=["Ecobee"])
+    context = _context(other_entities=["Ecobee"])
     prompt = context.whisper_prompt(_words, max_tokens=100, prefix="  Smart home  ")
     assert prompt == "Smart home. Ecobee."
 
 
 def test_prefix_counts_against_the_budget():
-    context = _context(entities=["Ecobee", "Nanit"])
+    context = _context(other_entities=["Ecobee", "Nanit"])
 
     # "Vocabulary: Ecobee." is two words; adding Nanit would make three.
     prompt = context.whisper_prompt(_words, max_tokens=2, prefix="Vocabulary:")
@@ -105,7 +117,7 @@ def test_prefix_counts_against_the_budget():
 
 
 def test_prefix_survives_a_budget_too_small_for_any_name():
-    context = _context(entities=["Ecobee"])
+    context = _context(other_entities=["Ecobee"])
     prompt = context.whisper_prompt(_words, max_tokens=1, prefix="Vocabulary:")
     assert prompt == "Vocabulary:"
 
@@ -129,7 +141,7 @@ def test_prompt_is_built_once_per_budget_and_tokenizer():
         calls.append(text)
         return _words(text)
 
-    context = _context(entities=["Ecobee", "Nanit"])
+    context = _context(other_entities=["Ecobee", "Nanit"])
     first = context.whisper_prompt(counting, max_tokens=100)
     used = len(calls)
     second = context.whisper_prompt(counting, max_tokens=100)
@@ -139,7 +151,7 @@ def test_prompt_is_built_once_per_budget_and_tokenizer():
 
 
 def test_a_different_tokenizer_rebuilds_the_prompt():
-    context = _context(entities=["Ecobee"])
+    context = _context(other_entities=["Ecobee"])
     context.whisper_prompt(_words, max_tokens=100, tokenizer_key="a")
 
     calls = []
@@ -153,8 +165,8 @@ def test_a_different_tokenizer_rebuilds_the_prompt():
 
 
 def test_equality_ignores_the_prompt_cache():
-    left = _context(entities=["Ecobee"])
-    right = _context(entities=["Ecobee"])
+    left = _context(other_entities=["Ecobee"])
+    right = _context(other_entities=["Ecobee"])
     left.whisper_prompt(_words, max_tokens=100)
 
     assert left == right, "a built prompt must not make snapshots unequal"

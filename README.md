@@ -50,8 +50,9 @@ pip install 'wyoming-faster-whisper[hass]'
 ```
 
 It collects the names of **conversation-exposed** entities and their aliases, plus
-your area and floor names — the names a speaker can actually say. Nothing else is
-read, and no service is ever called.
+your area and floor names — the names a speaker can actually say. It also reads
+which area each exposed entity is in, so the areas you can actually command rank
+above the ones you can't. Nothing else is read, and no service is ever called.
 
 The fetch is free in latency terms: it starts when the audio starts, while the
 speaker is still talking, and the names are ready by the time the audio stops.
@@ -66,11 +67,26 @@ are used, or none at all, and the transcript still comes back.
 | `--hass-prompt-max-tokens` | `200` | Token budget for names. Whisper's hard cap is 223 and quality falls off before it. |
 | `--hass-prompt-timeout` | `1.0` | How long to wait on an unfinished refresh before transcribing with the names already on hand. |
 
-A large home has more names than the budget holds. They are added in priority
-order — areas, floors, entity names, then aliases — and cut off when the budget
-runs out; run with `--debug` to see how many were dropped and the exact prompt
-used. `--initial-prompt` still works and is kept at the front of the prompt, ahead
-of anything discovered from Home Assistant.
+A large home has more names than the budget holds, so they are added in priority
+order and cut off when it runs out:
+
+1. **Areas and floors that hold an exposed entity** — said in nearly every command
+   ("turn on the *office* lamp"), and known to be real targets because something
+   in them can actually be commanded.
+2. **Entity names in the domains people say out loud** — `light`, `switch`, `fan`,
+   `media_player`, `climate`, `cover`, `lock`, `scene`, `script`, `todo`, `vacuum`.
+   These are the proper nouns that get misheard.
+3. **The remaining areas and floors** — sayable, but with nothing exposed in them
+   there is no command they can complete.
+4. **The remaining entity names** — in a big home mostly sensors, which are
+   hundreds in number and usually asked about by area ("the temperature in the
+   office") rather than by their own name.
+5. **Aliases**, ordered to follow their entity's tier.
+
+Edit `PRIORITY_DOMAINS` in `wyoming_faster_whisper/hass_api.py` to change what
+lands in tier 2. Run with `--debug` to see how many names were dropped and the
+exact prompt used. `--initial-prompt` still works and is kept at the front of the
+prompt, ahead of anything discovered from Home Assistant.
 
 This biases `faster-whisper` and `qwen3-asr`, the backends that take a prompt.
 Others ignore it.

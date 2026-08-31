@@ -46,7 +46,7 @@ def _cache(hass, **kwargs) -> HassNameCache:
 
 
 def _names(*entities) -> RecognitionContext:
-    return RecognitionContext(entities=list(entities))
+    return RecognitionContext(priority_entities=list(entities))
 
 
 # --- prompt ---------------------------------------------------------------
