@@ -6,6 +6,14 @@
   - Aliases are no longer ranked below every name. An alias is what the speaker says *instead of* the entity's name, so each one now sits directly behind the name it belongs to and shares its tier — previously a home with enough areas and entities to fill the budget lost every alias
   - An entity's area is resolved through its device when it has no area of its own, so the device registry is read too — only when an exposed entity actually needs it
   - In a home that overruns the budget, this stops exposed-by-the-hundred sensors and empty areas from crowding out the lights, scenes and media players a command names
+- Add a `gpu` Docker tag (`Dockerfile.gpu`) that runs faster-whisper, transformers, onnx-asr, and qwen3-asr on an NVIDIA GPU: CUDA torch plus `onnxruntime-gpu` on a CUDA 12.8 / cuDNN 9 base. `--device cuda` is the default there; `docker run --gpus all` and the NVIDIA Container Toolkit are required (the image carries the same extras as the CPU one, so FunASR is still not included in either)
+  - NVIDIA and amd64 only. CTranslate2 (faster-whisper) has no ROCm or XPU backend and no arm64 CUDA wheel, which is what bounds the image; the torch-based backends alone would work elsewhere
+  - `--stt-library sherpa` stays on the CPU there. sherpa-onnx bundles its own onnxruntime, and two CUDA-enabled onnxruntime builds in one process segfault — reachable via `--stt-library auto`, which routes English to sherpa and Russian to onnx-asr. sherpa's default models are int8, which the CUDA provider gains little on, so the CPU wheel is the better half of the trade
+- `--device` now reaches every backend, not just faster-whisper and FunASR. `transformers` moves the model to the device and runs float16 there, `sherpa` selects the CUDA provider, and `onnx-asr`/`qwen3-asr` select the CUDA execution provider with a CPU fallback. `cuda:N` selects a specific GPU
+  - Previously `--device cuda` was silently ignored by four of the six backends
+- On CUDA, `--compute-type` defaults to `float16` rather than the model's own type, and the auto-selected faster-whisper model is `Systran/faster-whisper-small` (float16) rather than an int8 conversion
+- `sherpa` now locates its model files by prefix instead of hard-coding `*.int8.onnx`, and prefers an fp32 graph over int8 when running on the GPU with a model that ships both
+- The server now warns instead of staying silent when `--device cuda` cannot actually be used — a CPU-only onnxruntime or sherpa-onnx build, or a CUDA provider that fails to load — since every backend still loads and transcribes on the CPU, and the only other symptom is the absence of a speedup
 
 ## 3.6.0
 

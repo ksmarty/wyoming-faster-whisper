@@ -7,9 +7,11 @@ from unittest.mock import patch
 
 import numpy as np
 import onnx_asr
+import onnxruntime as ort
 from huggingface_hub import snapshot_download
 
 from .const import Transcriber
+from .device import onnx_providers, warn_if_no_onnx_gpu
 
 _RATE = 16000
 
@@ -18,9 +20,14 @@ class OnnxAsrTranscriber(Transcriber):
     """Wrapper for onnx-asr model."""
 
     def __init__(
-        self, model_id: str, cache_dir: Union[str, Path], local_files_only: bool
+        self,
+        model_id: str,
+        cache_dir: Union[str, Path],
+        local_files_only: bool,
+        device: str = "cpu",
     ) -> None:
         """Initialize model."""
+        warn_if_no_onnx_gpu(device, ort.get_available_providers())
 
         # Force download to our cache dir
         def snapshot_download_with_cache(*args, **kwargs) -> str:
@@ -30,7 +37,9 @@ class OnnxAsrTranscriber(Transcriber):
             return snapshot_download(*args, **kwargs)
 
         with patch("huggingface_hub.snapshot_download", snapshot_download_with_cache):
-            self.onnx_model = onnx_asr.load_model(model_id)
+            self.onnx_model = onnx_asr.load_model(
+                model_id, providers=onnx_providers(device)
+            )
 
     def transcribe(
         self,

@@ -12,6 +12,7 @@ import numpy as np
 import sherpa_onnx as so
 
 from .const import StreamingSession, Transcriber
+from .device import is_gpu, sherpa_provider
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,21 +52,65 @@ def _ensure_model(model_id: str, cache_dir: Union[str, Path]) -> Path:
     return model_dir
 
 
-def _find_model_file(model_dir: Path, prefix: str) -> str:
-    """Find a model file by prefix, preferring the int8 quantized version.
+def _find_model_file(model_dir: Path, prefix: str, prefer_int8: bool = True) -> str:
+    """Find a model file by prefix, preferring one quantization over the other.
 
     Streaming zipformer models use versioned file names (e.g.
     encoder-epoch-99-avg-1.int8.onnx), so we glob rather than hard-code.
+
+    int8 is the right default on the CPU. On the GPU it is not: the CUDA
+    execution provider has to partition around the quantization nodes it cannot
+    run, so an fp32 graph is usually faster there when the model ships one.
+    Several models (e.g. the Parakeet TDT releases) are int8-only, so this is a
+    preference and not a requirement.
     """
     int8_matches = sorted(model_dir.glob(f"{prefix}*.int8.onnx"))
-    if int8_matches:
-        return str(int8_matches[0])
+    other_matches = sorted(
+        p
+        for p in model_dir.glob(f"{prefix}*.onnx")
+        if not p.name.endswith(".int8.onnx")
+    )
 
-    matches = sorted(p for p in model_dir.glob(f"{prefix}*.onnx"))
-    if matches:
-        return str(matches[0])
+    ordered = (
+        (int8_matches, other_matches) if prefer_int8 else (other_matches, int8_matches)
+    )
+    for matches in ordered:
+        if matches:
+            return str(matches[0])
 
     raise FileNotFoundError(f"No '{prefix}*.onnx' model file found in {model_dir}")
+
+
+def _resolve_provider(device: str) -> str:
+    """Return the provider to use, falling back to the CPU with a warning.
+
+    sherpa-onnx bundles its own onnxruntime rather than using the pip package,
+    and the wheel on PyPI is CPU-only: it accepts provider="cuda", logs nothing
+    useful, and runs on the CPU anyway. Detect that here so the fallback is
+    stated rather than silently discovered as "the GPU image is no faster". A
+    CUDA build ships an extra provider library next to the Python module.
+
+    Note that the CUDA build is deliberately *not* used in the GPU image: its
+    bundled onnxruntime and the pip onnxruntime-gpu package cannot both
+    initialize CUDA in one process without crashing, and `--stt-library auto`
+    can load two backends at once. See Dockerfile.gpu.
+    """
+    if not is_gpu(device):
+        return "cpu"
+
+    lib_dir = Path(so.__file__).parent / "lib"
+    if not lib_dir.is_dir() or any(lib_dir.glob("libonnxruntime_providers_cuda*")):
+        # Either a CUDA build, or an unrecognized layout (e.g. a source build)
+        # about which nothing can be concluded - let sherpa-onnx decide.
+        return sherpa_provider(device)
+
+    _LOGGER.warning(
+        "Device '%s' was requested but this sherpa-onnx build has no CUDA "
+        "provider; running on the CPU instead. This is expected in the GPU "
+        "image, where sherpa-onnx is installed from PyPI on purpose.",
+        device,
+    )
+    return "cpu"
 
 
 def _bytes_to_samples(audio_bytes: bytes) -> np.ndarray:
@@ -81,18 +126,22 @@ class SherpaTranscriber(Transcriber):
         model_id: str,
         cache_dir: Union[str, Path],
         cpu_threads: int = 4,
+        device: str = "cpu",
     ) -> None:
         """Initialize model."""
         model_dir = _ensure_model(model_id, cache_dir)
+        provider = _resolve_provider(device)
+        prefer_int8 = provider == "cpu"
 
-        # Load model
+        # Load model. Locate the files by prefix so that both the int8-only
+        # releases and model directories that ship an fp32 graph work.
         self.recognizer = so.OfflineRecognizer.from_transducer(
             num_threads=cpu_threads,
-            encoder=f"{model_dir}/encoder.int8.onnx",
-            decoder=f"{model_dir}/decoder.int8.onnx",
-            joiner=f"{model_dir}/joiner.int8.onnx",
+            encoder=_find_model_file(model_dir, "encoder", prefer_int8),
+            decoder=_find_model_file(model_dir, "decoder", prefer_int8),
+            joiner=_find_model_file(model_dir, "joiner", prefer_int8),
             tokens=f"{model_dir}/tokens.txt",
-            provider="cpu",
+            provider=provider,
             model_type="nemo_transducer",
         )
 
@@ -139,9 +188,12 @@ class SherpaStreamingTranscriber(Transcriber):
         cache_dir: Union[str, Path],
         cpu_threads: int = 4,
         beam_size: int = 5,
+        device: str = "cpu",
     ) -> None:
         """Initialize model."""
         model_dir = _ensure_model(model_id, cache_dir)
+        provider = _resolve_provider(device)
+        prefer_int8 = provider == "cpu"
 
         # A beam size > 1 enables beam search, which is more accurate than the
         # default greedy decoding at a small latency cost.
@@ -153,12 +205,12 @@ class SherpaStreamingTranscriber(Transcriber):
         # Load model. Streaming zipformer file names are versioned, so locate
         # them by prefix instead of hard-coding.
         self.recognizer = so.OnlineRecognizer.from_transducer(
-            encoder=_find_model_file(model_dir, "encoder"),
-            decoder=_find_model_file(model_dir, "decoder"),
-            joiner=_find_model_file(model_dir, "joiner"),
+            encoder=_find_model_file(model_dir, "encoder", prefer_int8),
+            decoder=_find_model_file(model_dir, "decoder", prefer_int8),
+            joiner=_find_model_file(model_dir, "joiner", prefer_int8),
             tokens=str(model_dir / "tokens.txt"),
             num_threads=cpu_threads,
-            provider="cpu",
+            provider=provider,
             decoding_method=decoding_method,
             max_active_paths=max(beam_size, 1),
         )

@@ -7,7 +7,11 @@ as arguments, so the real STT backends need not be installed.
 import pytest
 
 from wyoming_faster_whisper.const import SttLibrary
-from wyoming_faster_whisper.models import guess_stt_library, vad_clip_enabled
+from wyoming_faster_whisper.models import (
+    guess_model,
+    guess_stt_library,
+    vad_clip_enabled,
+)
 
 _ALL_AVAILABLE = dict(
     has_transformers=True,
@@ -148,3 +152,45 @@ def test_named_libraries_are_ignored_when_flag_is_off() -> None:
     assert not vad_clip_enabled(
         SttLibrary.QWEN3_ASR, vad_clip=False, vad_clip_libraries={SttLibrary.QWEN3_ASR}
     )
+
+
+# --- default models on GPU ------------------------------------------------
+
+
+def test_faster_whisper_default_is_int8_on_cpu() -> None:
+    assert guess_model(SttLibrary.FASTER_WHISPER, "en", is_arm=False).endswith("-int8")
+    assert guess_model(SttLibrary.FASTER_WHISPER, "en", is_arm=True).endswith("-int8")
+
+
+def test_faster_whisper_default_is_float16_on_gpu() -> None:
+    # int8 saves memory a GPU has to spare and gives up the float16 throughput
+    # it was built for.
+    model = guess_model(SttLibrary.FASTER_WHISPER, "en", is_arm=False, gpu=True)
+    assert not model.endswith("-int8")
+    assert model == "Systran/faster-whisper-small"
+
+
+def test_faster_whisper_gpu_default_ignores_arm() -> None:
+    # A GPU-capable arm64 host (Jetson) has no reason to fall back to tiny.
+    assert guess_model(
+        SttLibrary.FASTER_WHISPER, "en", is_arm=True, gpu=True
+    ) == guess_model(SttLibrary.FASTER_WHISPER, "en", is_arm=False, gpu=True)
+
+
+@pytest.mark.parametrize(
+    "library",
+    [
+        SttLibrary.SHERPA,
+        SttLibrary.TRANSFORMERS,
+        SttLibrary.ONNX_ASR,
+        SttLibrary.FUNASR,
+        SttLibrary.QWEN3_ASR,
+    ],
+)
+def test_other_backends_keep_the_same_default_model_on_gpu(library) -> None:
+    # Their default models are published in one quantization only, so there is
+    # nothing to switch to; the device only changes the execution provider.
+    for language in ("en", "de", "ru", "zh", None):
+        assert guess_model(library, language, is_arm=False, gpu=True) == guess_model(
+            library, language, is_arm=False
+        )

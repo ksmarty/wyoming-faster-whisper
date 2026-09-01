@@ -58,7 +58,8 @@ async def main() -> None:
     parser.add_argument(
         "--device",
         default="cpu",
-        help="Device to use for inference (default: cpu)",
+        help="Device to use for inference: cpu, cuda, or cuda:N (default: cpu). "
+        "CUDA requires the GPU image or GPU-enabled wheels; see README.",
     )
     parser.add_argument(
         "--language",
@@ -68,7 +69,8 @@ async def main() -> None:
     parser.add_argument(
         "--compute-type",
         default="default",
-        help="Compute type (float16, int8, etc.)",
+        help="Compute type for faster-whisper (float16, int8, etc.); "
+        "defaults to float16 on CUDA and to the model's own type on CPU",
     )
     parser.add_argument(
         "--beam-size",

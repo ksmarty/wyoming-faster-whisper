@@ -150,6 +150,12 @@ class _FakeSession:
 
     def __init__(self, path, **kwargs) -> None:
         self.path = str(path)
+        self.providers = list(kwargs.get("providers") or ["CPUExecutionProvider"])
+
+    def get_providers(self):
+        # The real session reports what it actually ended up using, which is how
+        # the handler detects a CUDA provider that failed to load.
+        return self.providers
 
     def get_inputs(self):
         return [SimpleNamespace(name="mel")]

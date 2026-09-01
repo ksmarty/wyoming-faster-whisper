@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple, Union
 
 from .const import SttLibrary, Transcriber, sense_voice_language
+from .device import is_gpu, resolve_compute_type
 from .faster_whisper_handler import FasterWhisperTranscriber
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,10 +62,13 @@ class ModelLoader:
         self.download_dir = Path(download_dir)
         self.local_files_only = local_files_only
 
-        # faster-whisper only
         self.model = model
-        self.compute_type = compute_type
         self.device = device
+
+        # faster-whisper only. On a GPU an unspecified compute type becomes
+        # float16 rather than the model's own (int8, for the defaults here).
+        self.compute_type = resolve_compute_type(compute_type, device)
+
         self.beam_size = beam_size
         self.cpu_threads = cpu_threads
         self.initial_prompt = initial_prompt
@@ -155,13 +159,20 @@ class ModelLoader:
         if model is None:  # auto
             machine = platform.machine().lower()
             is_arm = ("arm" in machine) or ("aarch" in machine)
-            model = guess_model(stt_library, language, is_arm, streaming=streaming)
+            model = guess_model(
+                stt_library,
+                language,
+                is_arm,
+                streaming=streaming,
+                gpu=is_gpu(self.device),
+            )
 
         _LOGGER.debug(
-            "Selected stt-library '%s' with model '%s' (streaming=%s)",
+            "Selected stt-library '%s' with model '%s' (streaming=%s, device=%s)",
             stt_library.value,
             model,
             streaming,
+            self.device,
         )
 
         # Load transcriber
@@ -184,12 +195,16 @@ class ModelLoader:
                         self.download_dir,
                         cpu_threads=self.cpu_threads,
                         beam_size=self.beam_size,
+                        device=self.device,
                     )
                 else:
                     from .sherpa_handler import SherpaTranscriber  # noqa: F811
 
                     transcriber = SherpaTranscriber(
-                        model, self.download_dir, cpu_threads=self.cpu_threads
+                        model,
+                        self.download_dir,
+                        cpu_threads=self.cpu_threads,
+                        device=self.device,
                     )
             elif stt_library == SttLibrary.ONNX_ASR:
                 from .onnx_asr_handler import OnnxAsrTranscriber  # noqa: F811
@@ -198,6 +213,7 @@ class ModelLoader:
                     model,
                     cache_dir=self.download_dir,
                     local_files_only=self.local_files_only,
+                    device=self.device,
                 )
             elif stt_library == SttLibrary.TRANSFORMERS:
                 from .transformers_whisper import TransformersTranscriber  # noqa: F811
@@ -206,6 +222,7 @@ class ModelLoader:
                     model,
                     cache_dir=self.download_dir,
                     local_files_only=self.local_files_only,
+                    device=self.device,
                 )
             elif stt_library == SttLibrary.QWEN3_ASR:
                 from .qwen3_asr_handler import Qwen3AsrTranscriber  # noqa: F811
@@ -215,6 +232,7 @@ class ModelLoader:
                     cache_dir=self.download_dir,
                     local_files_only=self.local_files_only,
                     cpu_threads=self.cpu_threads,
+                    device=self.device,
                 )
             elif stt_library == SttLibrary.FUNASR:
                 from .funasr_handler import FunASRTranscriber  # noqa: F811
@@ -341,8 +359,16 @@ def guess_model(
     language: Optional[str],
     is_arm: bool,
     streaming: bool = False,
+    gpu: bool = False,
 ) -> str:
-    """Automatically guess STT model id."""
+    """Automatically guess STT model id.
+
+    Only the faster-whisper defaults change on a GPU, where the int8 CTranslate2
+    conversions used on the CPU are the wrong trade: they save memory a GPU has
+    to spare and give up the float16 throughput it was built for. The other
+    backends' default models are published in a single quantization, so there is
+    nothing to switch to.
+    """
     if stt_library == SttLibrary.SHERPA:
         if streaming:
             # Best available streaming (OnlineRecognizer) model. The Kroko
@@ -394,6 +420,12 @@ def guess_model(
         return "FunAudioLLM/SenseVoiceSmall"
 
     # faster-whisper
+    if gpu:
+        # float16 weights, and one size up: a GPU can afford it, and small is
+        # where Whisper's accuracy starts being worth the download. Larger
+        # models (e.g. Systran/faster-whisper-large-v3) are a --model away.
+        return "Systran/faster-whisper-small"
+
     if is_arm:
         return "rhasspy/faster-whisper-tiny-int8"
 

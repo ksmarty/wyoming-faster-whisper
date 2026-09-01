@@ -1,0 +1,75 @@
+# CUDA variant of the CPU image in ./Dockerfile, published as the "gpu" tag.
+#
+# amd64 only, and NVIDIA only: CTranslate2 (faster-whisper) has no ROCm or XPU
+# backend and no arm64 CUDA wheel, so it is the constraint that decides the
+# scope of this image. Jetson would need an nvcr.io/nvidia/l4t base and
+# JetPack-specific wheels; that is a separate image, not a platform of this one.
+#
+# The base supplies cuBLAS, NVRTC, and cuDNN 9, which CTranslate2 4.x,
+# onnxruntime-gpu, and the sherpa-onnx CUDA build all link against. Run with
+# `--gpus all` and the NVIDIA Container Toolkit installed on the host.
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
+
+# sherpa-onnx stays on the CPU wheel here, deliberately. A CUDA sherpa-onnx
+# build exists (the "+cuda12.cudnn9" wheels on the k2-fsa index), but sherpa-onnx
+# bundles its own onnxruntime rather than using the pip package - and two
+# CUDA-enabled onnxruntime builds in one process segfault, in either load order.
+# `--stt-library auto` can load two backends in one process (English routes to
+# sherpa, Russian to onnx-asr), so that crash is reachable in normal use. Since
+# sherpa's default models are int8, where the CUDA provider has to partition
+# around the quantization nodes and gains little, the CPU wheel is the better
+# half of the trade. The server logs a warning if --device cuda is used with a
+# sherpa build that has no CUDA support, and runs it on the CPU.
+#
+# onnxruntime-gpu on PyPI switched from CUDA 12 to CUDA 13 in 1.27.0 (1.26.0 is
+# the last CUDA 12 build). Unpinned, it installs a wheel that wants
+# libcublasLt.so.13 and quietly drops back to the CPU provider on this base.
+ARG ONNXRUNTIME_GPU_VERSION=">=1.19,<1.27"
+
+WORKDIR /usr/src
+
+COPY ./pyproject.toml ./
+RUN \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        python3-venv \
+    \
+    && python3 -m venv .venv \
+    && .venv/bin/pip3 install --no-cache-dir -U \
+        setuptools \
+        wheel \
+    && .venv/bin/pip3 install --no-cache-dir \
+        --extra-index-url 'https://download.pytorch.org/whl/cu126' \
+        'torch==2.6.0' \
+    \
+    # Note the -gpu extras: they pull onnxruntime-gpu instead of onnxruntime.
+    && .venv/bin/pip3 install --no-cache-dir \
+        -e '.[zeroconf,transformers,sherpa,onnx-asr-gpu,qwen3-asr-gpu,hass]' \
+    \
+    # faster-whisper depends on onnxruntime (for its bundled Silero VAD), so the
+    # CPU package arrives no matter what the extras ask for. Both packages
+    # install the same "onnxruntime" module, and whichever lands second wins:
+    # left alone, the CPU build overwrites onnxruntime-gpu's pybind extension and
+    # CUDAExecutionProvider disappears - silently, since the CPU provider still
+    # loads every model. Reconcile by removing both and reinstalling the GPU one
+    # alone. onnxruntime-gpu provides the module faster-whisper imports, so only
+    # pip's metadata is left unhappy (`pip check` reports the missing CPU
+    # package); nothing at runtime notices.
+    && .venv/bin/pip3 uninstall -y onnxruntime onnxruntime-gpu \
+    && .venv/bin/pip3 install --no-cache-dir "onnxruntime-gpu${ONNXRUNTIME_GPU_VERSION}" \
+    \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ./ ./
+
+# docker_run.sh reads STT_DEVICE; an explicit --device on the command line still
+# wins, since user arguments are appended after it.
+ENV STT_DEVICE=cuda \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+EXPOSE 10300
+
+ENTRYPOINT ["bash", "docker_run.sh"]

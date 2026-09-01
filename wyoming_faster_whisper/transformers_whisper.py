@@ -8,6 +8,7 @@ import torch
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
 from .const import Transcriber
+from .device import is_gpu, torch_device
 
 _RATE = 16000
 
@@ -20,14 +21,24 @@ class TransformersTranscriber(Transcriber):
         model_id: str,
         cache_dir: Optional[Union[str, Path]] = None,
         local_files_only: bool = False,
+        device: str = "cpu",
     ) -> None:
         """Initialize Whisper model."""
         self.processor = AutoProcessor.from_pretrained(
             model_id, cache_dir=cache_dir, local_files_only=local_files_only
         )
+
+        # float16 on the GPU: Whisper is trained in fp16 and every GPU worth
+        # using has tensor cores for it. Keep float32 on the CPU, where fp16
+        # arithmetic is emulated and slower.
+        self.torch_dtype = torch.float16 if is_gpu(device) else torch.float32
         self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            model_id, cache_dir=cache_dir, local_files_only=local_files_only
+            model_id,
+            cache_dir=cache_dir,
+            local_files_only=local_files_only,
+            torch_dtype=self.torch_dtype,
         )
+        self.model.to(torch_device(device))
         self.model.eval()
 
     def transcribe(
@@ -53,6 +64,18 @@ class TransformersTranscriber(Transcriber):
         )
 
         inputs = self.processor(audio_tensor, sampling_rate=_RATE, return_tensors="pt")
+
+        # Move inputs to the model's device, casting the float features (the log
+        # mel spectrogram) to its dtype while leaving integer tensors such as
+        # attention masks alone.
+        inputs = {
+            key: (
+                value.to(self.model.device, dtype=self.torch_dtype)
+                if value.is_floating_point()
+                else value.to(self.model.device)
+            )
+            for key, value in inputs.items()
+        }
         generate_args = {**inputs, "num_beams": beam_size}
 
         if initial_prompt:

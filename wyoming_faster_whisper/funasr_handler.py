@@ -16,6 +16,7 @@ from funasr import AutoModel
 from funasr.utils.postprocess_utils import rich_transcription_postprocess
 
 from .const import Transcriber, sense_voice_language
+from .device import torch_device
 
 _RATE = 16000
 
@@ -48,7 +49,7 @@ class FunASRTranscriber(Transcriber):
             self.model = AutoModel(
                 model=model_id,
                 hub="hf",
-                device=device,
+                device=torch_device(device),
                 disable_update=True,
             )
 
