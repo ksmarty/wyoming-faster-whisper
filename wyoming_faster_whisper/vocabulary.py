@@ -13,10 +13,25 @@ makes the model hallucinate and echo words that were never spoken. A house with
 200 exposed entities cannot be sent wholesale, so the names are placed in
 priority order and cut off at a budget:
 
-  1. areas, then floors -- few in number and spoken in nearly every command
-     ("turn on the *office* lamp"), so they are cheap and near-certain to pay off
-  2. entity names -- the actual proper nouns, the high-value biasing targets
-  3. entity aliases -- alternate phrasings, valuable but redundant with (2)
+  1. areas and floors that hold an exposed entity -- few in number, spoken in
+     nearly every command ("turn on the *office* lamp"), and demonstrably real
+     targets, because something in them can actually be commanded
+  2. entity names in the domains a speaker names out loud -- lights, switches,
+     media players and the rest (see ``hass_api.PRIORITY_DOMAINS``). These are
+     the high-value proper nouns: the thing being turned on usually *is* the
+     name that gets misheard
+  3. the remaining areas and floors -- sayable, but with nothing exposed in them
+     there is no command they can complete
+  4. the remaining entity names -- in a big home mostly sensors, which are
+     hundreds in number and usually asked about by area ("the temperature in the
+     office") rather than by their own name
+
+Aliases are not a tier. An alias exists precisely because it is what the speaker
+says *instead of* the name the integration gave the thing, so it is at least as
+likely to be spoken as the name it replaces -- ranking every alias below every
+name drops the very words biasing exists to catch. Each one sits with the name
+it belongs to, so truncation cuts whole things rather than stranding a name
+whose spoken form was thrown away.
 
 Truncation is deliberate and deterministic: fill in that order, stop at the
 first name that would not fit, and log what was dropped. No scoring, no
@@ -82,14 +97,27 @@ def clean_names(*groups: Iterable[Any]) -> List[str]:
 class RecognitionContext:
     """The names from one snapshot of Home Assistant, in priority order.
 
+    Each field is one tier of the order documented at the top of this module,
+    highest first; ``hass_api`` decides which name lands in which, and puts each
+    alias directly behind the name it belongs to. Floors are grouped with areas
+    -- they are the same kind of name to a speaker, and there are only ever a
+    handful of them.
+
     A new snapshot is a new instance, so the prompt cache below dies with the
     names it was built from.
     """
 
-    areas: List[str] = field(default_factory=list)
-    floors: List[str] = field(default_factory=list)
-    entities: List[str] = field(default_factory=list)
-    aliases: List[str] = field(default_factory=list)
+    # Areas and floors with at least one exposed entity in them.
+    used_areas: List[str] = field(default_factory=list)
+
+    # Entities in the domains a speaker names out loud.
+    priority_entities: List[str] = field(default_factory=list)
+
+    # Areas and floors with nothing exposed in them.
+    empty_areas: List[str] = field(default_factory=list)
+
+    # Every other exposed entity.
+    other_entities: List[str] = field(default_factory=list)
 
     # Cached by (prefix, budget, tokenizer). Building the prompt costs one
     # tokenizer call per name, and the same prompt is reused for every utterance
@@ -99,11 +127,21 @@ class RecognitionContext:
     )
 
     def all_names(self) -> List[str]:
-        """Every name in priority order, de-duped across the buckets."""
-        return clean_names(self.areas, self.floors, self.entities, self.aliases)
+        """Every name in priority order, de-duped across the tiers."""
+        return clean_names(
+            self.used_areas,
+            self.priority_entities,
+            self.empty_areas,
+            self.other_entities,
+        )
 
     def __bool__(self) -> bool:
-        return bool(self.areas or self.floors or self.entities or self.aliases)
+        return bool(
+            self.used_areas
+            or self.priority_entities
+            or self.empty_areas
+            or self.other_entities
+        )
 
     def whisper_prompt(
         self,

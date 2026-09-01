@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Home Assistant names now fill the prompt budget in four priority tiers: areas/floors that hold an exposed entity, then entity names in the domains people say out loud (`PRIORITY_DOMAINS`: light, switch, fan, media_player, climate, scene, todo), then the remaining areas/floors, then the remaining entity names
+  - Aliases are no longer ranked below every name. An alias is what the speaker says *instead of* the entity's name, so each one now sits directly behind the name it belongs to and shares its tier — previously a home with enough areas and entities to fill the budget lost every alias
+  - An entity's area is resolved through its device when it has no area of its own, so the device registry is read too — only when an exposed entity actually needs it
+  - In a home that overruns the budget, this stops exposed-by-the-hundred sensors and empty areas from crowding out the lights, scenes and media players a command names
+
 ## 3.6.0
 
 - Add `--hass-token` (extra: `hass`) to bias transcription toward the names in Home Assistant: conversation-exposed entity names and aliases, plus area and floor names, read over the websocket API and passed to the model as a prompt (fixes e.g. "What's the temperature of the incubi?" → "What's the temperature of the Ecobee?")

@@ -40,29 +40,54 @@ _STATES = [
 ]
 
 _ENTRIES = {
-    "light.office_lamp": {"aliases": ["Desk Lamp"], "disabled_by": None},
-    "sensor.ecobee": {"aliases": [], "disabled_by": None},
+    # No area of its own: it inherits its device's, which is the common case.
+    "light.office_lamp": {
+        "aliases": ["Desk Lamp"],
+        "disabled_by": None,
+        "device_id": "dev-lamp",
+    },
+    "sensor.ecobee": {
+        "aliases": ["Thermostat"],
+        "disabled_by": None,
+        "area_id": "office",
+    },
     # Disabled entities are gone from the user's home in every practical sense.
-    "switch.old": {"aliases": ["Ancient Switch"], "disabled_by": "user"},
+    "switch.old": {
+        "aliases": ["Ancient Switch"],
+        "disabled_by": "user",
+        "area_id": "kitchen",
+    },
 }
 
+_DEVICES = [{"id": "dev-lamp", "area_id": "office"}]
+
 _AREAS = [
-    {"area_id": "office", "name": "Office", "aliases": ["Study"]},
-    {"area_id": "kitchen", "name": "Kitchen", "aliases": []},
+    {
+        "area_id": "office",
+        "name": "Office",
+        "aliases": ["Study"],
+        "floor_id": "upstairs",
+    },
+    # Nothing exposed lives here: its only entity is disabled.
+    {"area_id": "kitchen", "name": "Kitchen", "aliases": [], "floor_id": "downstairs"},
 ]
 
-_FLOORS = [{"floor_id": "upstairs", "name": "Upstairs", "aliases": ["Top Floor"]}]
+_FLOORS = [
+    {"floor_id": "upstairs", "name": "Upstairs", "aliases": ["Top Floor"]},
+    {"floor_id": "downstairs", "name": "Downstairs", "aliases": []},
+]
 
 _RESULTS = {
     "homeassistant/expose_entity/list": _EXPOSED,
     "get_states": _STATES,
     "config/entity_registry/get_entries": _ENTRIES,
+    "config/device_registry/list": _DEVICES,
     "config/area_registry/list": _AREAS,
     "config/floor_registry/list": _FLOORS,
 }
 
 
-def _app(results=None, fail_command=None) -> web.Application:
+def _app(results=None, fail_command=None, seen=None) -> web.Application:
     """A fake Home Assistant websocket API."""
     results = _RESULTS if results is None else results
 
@@ -81,6 +106,9 @@ def _app(results=None, fail_command=None) -> web.Application:
         async for raw in websocket:
             msg = json.loads(raw.data)
             msg_type = msg["type"]
+            if seen is not None:
+                seen.append(msg_type)
+
             if msg_type == fail_command:
                 await websocket.send_json(
                     {
@@ -119,17 +147,71 @@ async def _client(app: web.Application, token: str = TOKEN):
 # --- happy path -----------------------------------------------------------
 
 
-async def test_reads_areas_floors_entities_and_aliases():
+async def test_names_are_sorted_into_priority_tiers():
     hass, server = await _client(_app())
     try:
         context = await hass.get_context()
     finally:
         await server.close()
 
-    assert context.areas == ["Office", "Study", "Kitchen"]
-    assert context.floors == ["Upstairs", "Top Floor"]
-    assert context.entities == ["Office Lamp", "Ecobee"]
-    assert context.aliases == ["Desk Lamp"]
+    # The office holds both exposed entities -- the lamp through its device, the
+    # Ecobee directly -- which also puts the floor it is on in the top tier.
+    assert context.used_areas == ["Office", "Study", "Upstairs", "Top Floor"]
+
+    # Each alias rides along with the name it belongs to.
+    assert context.priority_entities == ["Office Lamp", "Desk Lamp"]
+
+    # The kitchen's only entity is disabled, and nothing is on its floor.
+    assert context.empty_areas == ["Kitchen", "Downstairs"]
+
+    # A sensor is asked about by area far more often than by name.
+    assert context.other_entities == ["Ecobee", "Thermostat"]
+
+
+async def test_an_alias_outranks_a_lower_tier_name():
+    """An alias is what the speaker says, so it cannot rank below every name."""
+    hass, server = await _client(_app())
+    try:
+        context = await hass.get_context()
+    finally:
+        await server.close()
+
+    names = context.all_names()
+    assert names.index("Desk Lamp") < names.index("Kitchen")
+
+
+async def test_an_unnamed_entity_still_contributes_its_alias():
+    entries = {
+        "light.office_lamp": {"aliases": ["Standing Light"], "disabled_by": None}
+    }
+    states = [{"entity_id": "light.office_lamp", "attributes": {}}]
+    results = {
+        **_RESULTS,
+        "get_states": states,
+        "config/entity_registry/get_entries": entries,
+    }
+
+    hass, server = await _client(_app(results=results))
+    try:
+        context = await hass.get_context()
+    finally:
+        await server.close()
+
+    assert context.priority_entities == ["Standing Light"]
+
+
+async def test_the_device_registry_is_only_fetched_when_an_entity_needs_it():
+    entries = {"sensor.ecobee": {"disabled_by": None, "area_id": "office"}}
+    results = {**_RESULTS, "config/entity_registry/get_entries": entries}
+
+    seen: list = []
+    hass, server = await _client(_app(results=results, seen=seen))
+    try:
+        await hass.get_context()
+    finally:
+        await server.close()
+
+    assert "config/device_registry/list" not in seen
 
 
 async def test_unexposed_entities_are_ignored():
@@ -162,9 +244,9 @@ async def test_the_prompt_is_built_from_a_live_fetch():
         await server.close()
 
     prompt = context.whisper_prompt(lambda text: len(text.split()), max_tokens=1000)
-    assert (
-        prompt
-        == "Office, Study, Kitchen, Upstairs, Top Floor, Office Lamp, Ecobee, Desk Lamp."
+    assert prompt == (
+        "Office, Study, Upstairs, Top Floor, Office Lamp, Desk Lamp, "
+        "Kitchen, Downstairs, Ecobee, Thermostat."
     )
 
 
