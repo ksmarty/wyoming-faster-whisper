@@ -1,4 +1,12 @@
-# CUDA variant of the CPU image in ./Dockerfile, published as the "gpu" tag.
+# CUDA variant of the CPU image in ./Dockerfile.
+#
+# Not published to Docker Hub - build it locally:
+#
+#   docker build -f Dockerfile.gpu -t wyoming-whisper:gpu .
+#
+# It comes out around 10.7 GB (mostly the CUDA torch wheel) against ~1.6 GB for
+# the CPU image, and Home Assistant OS has no GPU passthrough, so its entire
+# audience is already running Docker directly.
 #
 # amd64 only, and NVIDIA only: CTranslate2 (faster-whisper) has no ROCm or XPU
 # backend and no arm64 CUDA wheel, so it is the constraint that decides the

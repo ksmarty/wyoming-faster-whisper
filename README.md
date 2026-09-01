@@ -13,7 +13,7 @@
 Clone the repository and set up Python virtual environment:
 
 ``` sh
-git clone https://github.com/rhasspy/wyoming-faster-whisper.git
+git clone https://github.com/OHF-Voice/wyoming-faster-whisper.git
 cd wyoming-faster-whisper
 script/setup
 ```
@@ -136,13 +136,25 @@ docker run -it -p 10300:10300 -v /path/to/local/data:/data rhasspy/wyoming-whisp
 
 ### GPU Image
 
-The `gpu` tag runs the speech-to-text backends on an NVIDIA GPU. It needs the
+`Dockerfile.gpu` runs the speech-to-text backends on an NVIDIA GPU. **It is not
+published to Docker Hub — you build it yourself**, because it comes out around
+10.7 GB (mostly the CUDA torch wheel) against ~1.6 GB for the CPU image, and
+Home Assistant OS has no GPU passthrough, so everyone who can use it is already
+running Docker directly.
+
+``` sh
+git clone https://github.com/OHF-Voice/wyoming-faster-whisper.git
+cd wyoming-faster-whisper
+docker build -f Dockerfile.gpu -t wyoming-whisper:gpu .
+```
+
+Running it needs the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 on the host, and `--gpus`:
 
 ``` sh
 docker run -it --gpus all -p 10300:10300 -v /path/to/local/data:/data \
-    rhasspy/wyoming-whisper:gpu --language en
+    wyoming-whisper:gpu --language en
 ```
 
 `--device cuda` is the default in this image; pass `--device cuda:1` to pick a
@@ -152,7 +164,7 @@ CPU, and a GPU can comfortably run much larger ones:
 
 ``` sh
 docker run -it --gpus all -p 10300:10300 -v /path/to/local/data:/data \
-    rhasspy/wyoming-whisper:gpu --model Systran/faster-whisper-large-v3 --language en
+    wyoming-whisper:gpu --model Systran/faster-whisper-large-v3 --language en
 ```
 
 Notes and limits:
@@ -160,11 +172,9 @@ Notes and limits:
 - **NVIDIA and amd64 only.** CTranslate2, which faster-whisper is built on, has
   no ROCm or Intel XPU backend and publishes no arm64 CUDA wheel. The
   torch-based backends (`--stt-library transformers`, `--stt-library funasr`)
-  would work on ROCm or XPU, but that would be a different image, not this tag.
-- **The image is large** (~10.7 GB, mostly the CUDA torch wheel) versus ~1.6 GB
-  for the CPU image. Don't pull it onto a Pi by accident.
-- **Home Assistant OS provides no GPU passthrough**, so this tag is for
-  standalone Docker/Compose users rather than the add-on.
+  would work on ROCm or XPU, but that would be a different image.
+- **Budget the disk.** ~10.7 GB for the image, plus build cache. Don't build it
+  on a Pi by accident.
 - **`--stt-library sherpa` runs on the CPU even in this image.** A CUDA
   sherpa-onnx build exists, but sherpa-onnx bundles its own onnxruntime, and two
   CUDA-enabled onnxruntime builds in one process segfault. Its default Parakeet
@@ -173,6 +183,23 @@ Notes and limits:
 
 If `--device cuda` produces no speedup, check the log: the server warns when the
 installed onnxruntime or sherpa-onnx build has no usable CUDA support.
+
+### GPU Without Docker
+
+For a local install rather than a container, the two onnxruntime-based backends
+have GPU counterparts of their extras — `onnx-asr-gpu` and `qwen3-asr-gpu`,
+which pull `onnxruntime-gpu` in place of `onnxruntime`:
+
+``` sh
+pip install 'wyoming-faster-whisper[transformers,onnx-asr-gpu,qwen3-asr-gpu]'
+```
+
+faster-whisper additionally needs a CUDA-enabled CTranslate2 and torch built for
+your CUDA version, and it depends on `onnxruntime` (for its bundled Silero VAD),
+which will pull the CPU package back in and clobber `onnxruntime-gpu` — both
+install the same `onnxruntime` module and whichever lands second wins, silently,
+since the CPU provider still loads every model. Reinstall `onnxruntime-gpu`
+last. `Dockerfile.gpu` does exactly this and is the working reference.
 
 ## Environment Variables
 
@@ -208,6 +235,11 @@ specially:
   spaces. Empty means the flag with no values, i.e. every library.
 - **`--zeroconf`**, whose value is optional, takes the name to announce, or
   empty for the default name.
+
+Any other variable left empty means the same as not setting it at all, which is
+what a compose file or a `.env` produces for a value whose author left it blank.
+An empty `WYO_WHISPER_URI` gets you argparse's "the following arguments are
+required", not a server that starts up and fails on an empty string.
 
 ### Secrets
 

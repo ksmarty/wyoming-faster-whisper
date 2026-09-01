@@ -75,7 +75,7 @@ def parse_args(
         known_vars.add(var_name)
 
         value = _read_env(parser, environ, var_name)
-        if value is None:
+        if (value is None) or _is_unset(action, value):
             continue
 
         default = _convert(parser, action, var_name, value)
@@ -104,6 +104,35 @@ def parse_args(
 
 
 # -----------------------------------------------------------------------------
+
+
+def _is_unset(action: argparse.Action, value: str) -> bool:
+    """Report whether an empty variable means "not set" for this option.
+
+    ``WYO_WHISPER_DATA_DIR=`` with nothing after it is what a compose file or a
+    ``.env`` produces for a value the author left blank, and it has to mean the
+    same thing as not writing the line at all. Otherwise it satisfies argparse's
+    required check while supplying nothing, and the server dies later on an
+    empty string or an empty list rather than on argparse's own "the following
+    arguments are required".
+
+    Three kinds of option give an empty value a meaning of its own, and keep it:
+    a flag reads it as false, ``--vad-clip`` as "every library", and
+    ``--zeroconf`` as "the default name".
+    """
+    if value.strip():
+        return False
+
+    if isinstance(action, _StoreConstAction):
+        return False  # --debug= is off, not unset
+
+    if action.nargs in ("*", "+"):
+        return False  # --vad-clip= is the flag with no values
+
+    if (action.nargs == "?") and (action.const is not None):
+        return False  # --zeroconf= is the flag with its default name
+
+    return True
 
 
 def _read_env(
