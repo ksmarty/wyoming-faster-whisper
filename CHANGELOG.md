@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Every command-line option can now also be set from the environment: `--some-option` reads `WYO_WHISPER_SOME_OPTION`, so a Compose stack can configure the container without rewriting its `command:` (#64, #112)
+  - Values can also come from a file named by `WYO_WHISPER_SOME_OPTION_FILE`, the Docker Compose/Swarm secrets convention, which keeps a long-lived Home Assistant token out of both the command line and the environment
+  - Precedence is command line, then `_FILE`, then the plain variable: an explicit argument is never silently overridden by a stale variable in a container
+  - Flags take `true`/`false` rather than being on whenever the variable exists, `--data-dir` splits on `:`, `--vad-clip` splits on commas or spaces, and values are checked against the option's type and choices with the variable named in the error
+  - A `WYO_WHISPER_` variable matching no option is warned about at startup instead of being ignored
+  - The Docker entrypoint drops its baked-in `--uri`, `--data-dir`, and `--device` defaults when the matching variable is set, since a command-line argument would otherwise always win over it
+
 - Home Assistant names now fill the prompt budget in four priority tiers: areas/floors that hold an exposed entity, then entity names in the domains people say out loud (`PRIORITY_DOMAINS`: light, switch, fan, media_player, climate, scene, todo), then the remaining areas/floors, then the remaining entity names
   - Aliases are no longer ranked below every name. An alias is what the speaker says *instead of* the entity's name, so each one now sits directly behind the name it belongs to and shares its tier — previously a home with enough areas and entities to fill the budget lost every alias
   - An entity's area is resolved through its device when it has no area of its own, so the device registry is read too — only when an exposed entity actually needs it
