@@ -106,6 +106,45 @@ def test_append_arg_command_line_wins() -> None:
     assert args.data_dir == ["/custom"]
 
 
+def test_empty_required_var_is_unset(capsys: pytest.CaptureFixture) -> None:
+    """An empty variable does not satisfy a required option.
+
+    A blank value in a compose file or a .env has to mean the same as not
+    setting it, so argparse reports the missing option instead of the server
+    starting with an empty string and failing further in.
+    """
+    with pytest.raises(SystemExit):
+        run([], WYO_WHISPER_URI="", WYO_WHISPER_DATA_DIR="/data")
+
+    assert "--uri" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit):
+        run([], WYO_WHISPER_URI="tcp://0.0.0.0:10300", WYO_WHISPER_DATA_DIR="")
+
+    assert "--data-dir" in capsys.readouterr().err
+
+
+def test_empty_optional_var_keeps_default() -> None:
+    """An empty variable leaves an optional option on its default."""
+    args = run(WYO_WHISPER_DEVICE="", WYO_WHISPER_MODEL="", WYO_WHISPER_HASS_TOKEN="")
+    assert args.device == "cpu"
+    assert args.model == "auto"
+    assert args.hass_token is None
+
+
+def test_whitespace_only_var_is_unset() -> None:
+    """A variable holding only whitespace is empty too."""
+    assert run(WYO_WHISPER_DEVICE="   ").device == "cpu"
+
+
+def test_empty_secret_file_is_unset(tmp_path: Path) -> None:
+    """An empty secret file does not enable the feature it would configure."""
+    token_path = tmp_path / "hass_token"
+    token_path.write_text("\n", encoding="utf-8")
+
+    assert run(WYO_WHISPER_HASS_TOKEN_FILE=str(token_path)).hass_token is None
+
+
 def test_list_arg() -> None:
     """An option taking several values splits on commas or spaces."""
     args = run(WYO_WHISPER_VAD_CLIP="qwen3-asr, sherpa")

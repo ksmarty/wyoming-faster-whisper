@@ -1,22 +1,23 @@
 # Changelog
 
-## Unreleased
+## 3.7.0
 
-- Every command-line option can now also be set from the environment: `--some-option` reads `WYO_WHISPER_SOME_OPTION`, so a Compose stack can configure the container without rewriting its `command:` (#64, #112)
+- Every command-line option can now also be set from the environment: `--some-option` reads `WYO_WHISPER_SOME_OPTION`, so a Compose stack can configure the container without rewriting its `command:` (#64 by @ffeliziani-tpmc, #112 by @DennisGaida)
   - Values can also come from a file named by `WYO_WHISPER_SOME_OPTION_FILE`, the Docker Compose/Swarm secrets convention, which keeps a long-lived Home Assistant token out of both the command line and the environment
   - Precedence is command line, then `_FILE`, then the plain variable: an explicit argument is never silently overridden by a stale variable in a container
   - Flags take `true`/`false` rather than being on whenever the variable exists, `--data-dir` splits on `:`, `--vad-clip` splits on commas or spaces, and values are checked against the option's type and choices with the variable named in the error
-  - A `WYO_WHISPER_` variable matching no option is warned about at startup instead of being ignored
+  - A `WYO_WHISPER_` variable matching no option is warned about at startup instead of being ignored, and one left empty means the same as not setting it — except for the three that give empty a meaning of their own (a flag is off, `--vad-clip` is every library, `--zeroconf` is the default name)
   - The Docker entrypoint drops its baked-in `--uri`, `--data-dir`, and `--device` defaults when the matching variable is set, since a command-line argument would otherwise always win over it
 
 - Home Assistant names now fill the prompt budget in four priority tiers: areas/floors that hold an exposed entity, then entity names in the domains people say out loud (`PRIORITY_DOMAINS`: light, switch, fan, media_player, climate, scene, todo), then the remaining areas/floors, then the remaining entity names
   - Aliases are no longer ranked below every name. An alias is what the speaker says *instead of* the entity's name, so each one now sits directly behind the name it belongs to and shares its tier — previously a home with enough areas and entities to fill the budget lost every alias
   - An entity's area is resolved through its device when it has no area of its own, so the device registry is read too — only when an exposed entity actually needs it
   - In a home that overruns the budget, this stops exposed-by-the-hundred sensors and empty areas from crowding out the lights, scenes and media players a command names
-- Add a `gpu` Docker tag (`Dockerfile.gpu`) that runs faster-whisper, transformers, onnx-asr, and qwen3-asr on an NVIDIA GPU: CUDA torch plus `onnxruntime-gpu` on a CUDA 12.8 / cuDNN 9 base. `--device cuda` is the default there; `docker run --gpus all` and the NVIDIA Container Toolkit are required (the image carries the same extras as the CPU one, so FunASR is still not included in either)
+- Add `Dockerfile.gpu`, a CUDA variant of the image that runs faster-whisper, transformers, onnx-asr, and qwen3-asr on an NVIDIA GPU: CUDA torch plus `onnxruntime-gpu` on a CUDA 12.8 / cuDNN 9 base. `--device cuda` is the default there; `docker run --gpus all` and the NVIDIA Container Toolkit are required (it carries the same extras as the CPU image, so FunASR is still not included in either) (#76 by @lmoe)
+  - **Build it yourself** — this one is not published to Docker Hub. It comes out around 10.7 GB, mostly the CUDA torch wheel, against ~1.6 GB for the CPU image, and Home Assistant OS offers no GPU passthrough, so everyone who can use it is already running Docker directly. `docker build -f Dockerfile.gpu -t wyoming-whisper:gpu .` — see the README
   - NVIDIA and amd64 only. CTranslate2 (faster-whisper) has no ROCm or XPU backend and no arm64 CUDA wheel, which is what bounds the image; the torch-based backends alone would work elsewhere
   - `--stt-library sherpa` stays on the CPU there. sherpa-onnx bundles its own onnxruntime, and two CUDA-enabled onnxruntime builds in one process segfault — reachable via `--stt-library auto`, which routes English to sherpa and Russian to onnx-asr. sherpa's default models are int8, which the CUDA provider gains little on, so the CPU wheel is the better half of the trade
-- `--device` now reaches every backend, not just faster-whisper and FunASR. `transformers` moves the model to the device and runs float16 there, `sherpa` selects the CUDA provider, and `onnx-asr`/`qwen3-asr` select the CUDA execution provider with a CPU fallback. `cuda:N` selects a specific GPU
+- `--device` now reaches every backend, not just faster-whisper and FunASR. `transformers` moves the model to the device and runs float16 there, `sherpa` selects the CUDA provider, and `onnx-asr`/`qwen3-asr` select the CUDA execution provider with a CPU fallback. `cuda:N` selects a specific GPU (#87 by @zackify)
   - Previously `--device cuda` was silently ignored by four of the six backends
 - On CUDA, `--compute-type` defaults to `float16` rather than the model's own type, and the auto-selected faster-whisper model is `Systran/faster-whisper-small` (float16) rather than an int8 conversion
 - `sherpa` now locates its model files by prefix instead of hard-coding `*.int8.onnx`, and prefers an fp32 graph over int8 when running on the GPU with a model that ships both
