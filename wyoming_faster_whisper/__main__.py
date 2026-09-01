@@ -20,6 +20,8 @@ from .const import (
     SttLibrary,
 )
 from .dispatch_handler import DispatchEventHandler
+from .env_args import ENV_PREFIX
+from .env_args import parse_args as parse_args_with_env
 from .models import ModelLoader
 from .vocabulary import DEFAULT_PROMPT_MAX_TOKENS
 
@@ -30,9 +32,20 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-async def main() -> None:
-    """Main entry point."""
-    parser = argparse.ArgumentParser()
+def get_parser() -> argparse.ArgumentParser:
+    """Return the command-line parser.
+
+    Every option here also has an environment variable, so an argument added
+    below needs nothing extra to be settable from a container's environment.
+    """
+    parser = argparse.ArgumentParser(
+        epilog=(
+            "Every option can also be set from the environment: --some-option "
+            f"reads {ENV_PREFIX}SOME_OPTION, or {ENV_PREFIX}SOME_OPTION_FILE "
+            "to read the value out of a file (docker secrets). "
+            "Command-line arguments win over both."
+        )
+    )
     parser.add_argument("--uri", required=True, help="unix:// or tcp://")
     #
     parser.add_argument(
@@ -160,7 +173,8 @@ async def main() -> None:
     parser.add_argument(
         "--hass-token",
         help="Long-lived access token for Home Assistant. Enables biasing toward "
-        "the names of exposed entities, areas, and floors (extra: hass)",
+        "the names of exposed entities, areas, and floors (extra: hass). Keep it "
+        f"off the command line with {ENV_PREFIX}HASS_TOKEN_FILE",
     )
     parser.add_argument(
         "--hass-api",
@@ -199,7 +213,13 @@ async def main() -> None:
         version=__version__,
         help="Print version and exit",
     )
-    args = parser.parse_args()
+
+    return parser
+
+
+async def main() -> None:
+    """Main entry point."""
+    args = parse_args_with_env(get_parser())
 
     if not args.download_dir:
         # Download to first data dir by default

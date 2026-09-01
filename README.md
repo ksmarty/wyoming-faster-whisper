@@ -61,7 +61,7 @@ are used, or none at all, and the transcript still comes back.
 
 | Option | Default | Purpose |
 | --- | --- | --- |
-| `--hass-token` | | Long-lived access token. Enables everything above. |
+| `--hass-token` | | Long-lived access token. Enables everything above. Use `WYO_WHISPER_HASS_TOKEN_FILE` to keep it off the command line (see [Environment Variables](#environment-variables)). |
 | `--hass-api` | `http://homeassistant.local:8123/api` | Where to find Home Assistant. |
 | `--hass-refresh-seconds` | `0` | Minimum seconds between refreshes. `0` refreshes every utterance, so a rename takes effect immediately. |
 | `--hass-prompt-max-tokens` | `200` | Token budget for names. Whisper's hard cap is 223 and quality falls off before it. |
@@ -173,3 +173,72 @@ Notes and limits:
 
 If `--device cuda` produces no speedup, check the log: the server warns when the
 installed onnxruntime or sherpa-onnx build has no usable CUDA support.
+
+## Environment Variables
+
+Every command-line option can also be set from the environment, which is what
+Docker Compose gives you to configure a container without rewriting its
+`command:`. The variable is the option's name, uppercased, with dashes as
+underscores and a `WYO_WHISPER_` prefix:
+
+| Option | Variable |
+| --- | --- |
+| `--model` | `WYO_WHISPER_MODEL` |
+| `--language` | `WYO_WHISPER_LANGUAGE` |
+| `--stt-library` | `WYO_WHISPER_STT_LIBRARY` |
+| `--hass-token` | `WYO_WHISPER_HASS_TOKEN` |
+| ...and so on for every option in `--help` | |
+
+**Precedence**: a command-line argument always wins over the environment, so a
+variable left over in a container can never silently override an explicit
+argument. A variable that starts with `WYO_WHISPER_` but matches no option is
+reported at startup rather than ignored, so a typo doesn't leave the server
+running with a default you thought you had changed.
+
+A few options don't take a plain string on the command line, so they read one
+specially:
+
+- **Flags** (`--debug`, `--vad-filter`, `--local-files-only`, ...) take
+  `1`/`true`/`yes`/`on` or `0`/`false`/`no`/`off`/empty. Unlike a plain "is it
+  set?" test, `WYO_WHISPER_DEBUG=false` really does mean off.
+- **`--data-dir`**, which can be repeated, splits on `:` —
+  `WYO_WHISPER_DATA_DIR=/data:/media/models`. Passing any `--data-dir` on the
+  command line replaces the list rather than adding to it.
+- **`--vad-clip`**, which takes any number of values, splits on commas or
+  spaces. Empty means the flag with no values, i.e. every library.
+- **`--zeroconf`**, whose value is optional, takes the name to announce, or
+  empty for the default name.
+
+### Secrets
+
+Each variable also has a `_FILE` form naming a file to read the value out of:
+`WYO_WHISPER_HASS_TOKEN_FILE=/run/secrets/hass_token`. That is the convention
+Docker Compose and Swarm secrets use — a secret is mounted as a file rather than
+handed over as a variable — and it keeps a long-lived Home Assistant token out
+of both the process's command line and its environment. The file is preferred
+over the plain variable when both are set, and its trailing newline is stripped.
+
+```yaml
+services:
+  whisper:
+    image: rhasspy/wyoming-whisper
+    ports:
+      - "10300:10300"
+    volumes:
+      - ./data:/data
+    environment:
+      WYO_WHISPER_MODEL: tiny-int8
+      WYO_WHISPER_LANGUAGE: en
+      WYO_WHISPER_HASS_API: http://homeassistant.local:8123/api
+      WYO_WHISPER_HASS_TOKEN_FILE: /run/secrets/hass_token
+    secrets:
+      - hass_token
+
+secrets:
+  hass_token:
+    file: ./secrets/hass_token.txt
+```
+
+In the Docker image, `--uri`, `--data-dir`, and `--device` have defaults baked
+into the entrypoint; those are dropped when the matching variable is set, so
+`WYO_WHISPER_URI` and friends work there too.
