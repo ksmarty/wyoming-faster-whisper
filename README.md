@@ -74,8 +74,8 @@ order and cut off when it runs out:
    ("turn on the *office* lamp"), and known to be real targets because something
    in them can actually be commanded.
 2. **Entity names in the domains people say out loud** — `light`, `switch`, `fan`,
-   `media_player`, `climate`, `cover`, `lock`, `scene`, `script`, `todo`, `vacuum`.
-   These are the proper nouns that get misheard.
+   `media_player`, `climate`, `scene`, `todo`. These are the proper nouns that get
+   misheard.
 3. **The remaining areas and floors** — sayable, but with nothing exposed in them
    there is no command they can complete.
 4. **The remaining entity names** — in a big home mostly sensors, which are

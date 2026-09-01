@@ -17,7 +17,7 @@ priority order and cut off at a budget:
      nearly every command ("turn on the *office* lamp"), and demonstrably real
      targets, because something in them can actually be commanded
   2. entity names in the domains a speaker names out loud -- lights, switches,
-     covers, scenes and the rest (see ``hass_api.PRIORITY_DOMAINS``). These are
+     media players and the rest (see ``hass_api.PRIORITY_DOMAINS``). These are
      the high-value proper nouns: the thing being turned on usually *is* the
      name that gets misheard
   3. the remaining areas and floors -- sayable, but with nothing exposed in them
