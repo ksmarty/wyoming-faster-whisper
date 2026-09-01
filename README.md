@@ -136,7 +136,7 @@ docker run -it -p 10300:10300 -v /path/to/local/data:/data rhasspy/wyoming-whisp
 
 ### GPU Image
 
-The `gpu` tag runs every backend on an NVIDIA GPU. It needs the
+The `gpu` tag runs the speech-to-text backends on an NVIDIA GPU. It needs the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 on the host, and `--gpus`:
 
@@ -161,14 +161,15 @@ Notes and limits:
   no ROCm or Intel XPU backend and publishes no arm64 CUDA wheel. The
   torch-based backends (`--stt-library transformers`, `--stt-library funasr`)
   would work on ROCm or XPU, but that would be a different image, not this tag.
-- **The image is large** (~11 GB, mostly the CUDA torch wheel and the sherpa
-  CUDA provider) versus ~1.6 GB for the CPU image. Don't pull it onto a Pi by
-  accident.
+- **The image is large** (~10.7 GB, mostly the CUDA torch wheel) versus ~1.6 GB
+  for the CPU image. Don't pull it onto a Pi by accident.
 - **Home Assistant OS provides no GPU passthrough**, so this tag is for
   standalone Docker/Compose users rather than the add-on.
 - **`--stt-library sherpa` runs on the CPU even in this image.** A CUDA
   sherpa-onnx build exists, but sherpa-onnx bundles its own onnxruntime, and two
-  CUDA-enabled onnxruntime builds in one process segfault — which
+  CUDA-enabled onnxruntime builds in one process segfault. Its default Parakeet
+  models are int8, which the CUDA provider gains little on, so the CPU wheel is
+  the better half of that trade.
 
 If `--device cuda` produces no speedup, check the log: the server warns when the
 installed onnxruntime or sherpa-onnx build has no usable CUDA support.
