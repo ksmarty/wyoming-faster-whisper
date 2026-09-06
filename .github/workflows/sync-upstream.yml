@@ -1,0 +1,44 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    # Daily at 08:00 UTC
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/OHF-Voice/wyoming-faster-whisper.git || true
+
+      - name: Fetch upstream
+        run: |
+          git fetch upstream --tags
+
+      - name: Merge and push upstream changes
+        run: |
+          git checkout main
+          if [ "$(git rev-parse main)" = "$(git rev-parse upstream/main)" ]; then
+            echo "Already up to date. Nothing to push."
+            exit 0
+          fi
+          git merge upstream/main --no-edit
+          git push origin main
+          git push origin --tags || true
