@@ -9,6 +9,10 @@ on:
 
 jobs:
   build:
+    # Only meaningful in the upstream repo. The fork's sync workflow pushes
+    # upstream's release tags, and this workflow would fail at the DockerHub
+    # login step there (no DOCKERHUB_* secrets). Dependent jobs skip with it.
+    if: github.repository_owner == 'OHF-Voice'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.read_ver.outputs.tag }}
