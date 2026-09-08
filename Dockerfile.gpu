@@ -80,4 +80,9 @@ ENV STT_DEVICE=cuda \
 
 EXPOSE 10300
 
+# See the CPU image for why this is a Describe/Info round trip and why the start
+# period is this long.
+HEALTHCHECK --interval=30s --timeout=20s --start-period=5m --retries=3 \
+    CMD ["/usr/src/.venv/bin/python3", "-m", "wyoming_faster_whisper.health_check"]
+
 ENTRYPOINT ["bash", "docker_run.sh"]

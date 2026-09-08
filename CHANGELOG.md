@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a Docker health check to both images, matching the one in wyoming-piper 2.4.3 (#119 by @netsho)
+  - It sends the server a `Describe` and requires an `Info` with an ASR program back, rather than only opening a socket: the port is bound by the OS, so a connect-only check stays green even when the event loop is wedged, while a round trip proves the accept loop and the event handler are both still running
+  - `--start-period` is 5 minutes, since the server only starts listening once the model is loaded — which means downloading it on first run — and it takes 3 consecutive failures to turn the container unhealthy, because transcription runs on the event loop and a check can time out behind a long request
+  - The URI to check follows `WYO_WHISPER_URI` (or its `_FILE` form) when the container sets it, with a listen-everywhere host like `0.0.0.0` rewritten to loopback. A `--uri` passed to `docker run` instead is invisible to it, so pass the same one to `python3 -m wyoming_faster_whisper.health_check --uri ...`
+
 - Warn at startup when `--initial-prompt` or `--hass-token` is used with a Distil-Whisper model, and document that these models are not compatible with prompting (#118 by @jfoxwoosh)
   - Distil-Whisper was distilled without previous-text conditioning, so a prompt never helps it. `distil-small.en` is actively damaged: from about 52 prompt tokens on, `avg_logprob` drops below faster-whisper's -1.0 threshold, every temperature fails, and output that was correct unprompted comes back truncated (`Start a timer for 25 minutes` → `Start a timer.`) or looping (`Add Hot Dog, Hot Dog, Hot Dog, …`). Whether the transcript ends up wrong or empty then depends on `no_speech_prob` for that utterance
   - `distil-large-v3` is inert rather than broken — stable at every prompt size, but with no biasing effect either, still returning `EcoBe` with `Ecobee` in the prompt
