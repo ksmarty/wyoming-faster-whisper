@@ -22,7 +22,7 @@ from .const import (
 from .dispatch_handler import DispatchEventHandler
 from .env_args import ENV_PREFIX
 from .env_args import parse_args as parse_args_with_env
-from .models import ModelLoader
+from .models import ModelLoader, is_distil_whisper
 from .vocabulary import DEFAULT_PROMPT_MAX_TOKENS
 
 if TYPE_CHECKING:
@@ -325,6 +325,8 @@ async def main() -> None:
         vad_clip_libraries=vad_clip_libraries,
     )
 
+    _warn_if_prompt_unsupported(args, loader)
+
     # Load model
     _LOGGER.debug("Pre-loading transcriber")
     await loader.load_transcriber()
@@ -358,6 +360,32 @@ async def main() -> None:
 
 
 # -----------------------------------------------------------------------------
+
+
+def _warn_if_prompt_unsupported(args: argparse.Namespace, loader: ModelLoader) -> None:
+    """Warn when a prompt is being sent to a model that cannot handle one.
+
+    Distil-Whisper checkpoints degrade rather than benefit: the prompt truncates
+    or derails the transcription instead of biasing it. The prompt is still sent
+    -- this only warns -- because the damage is size-dependent and a very short
+    --initial-prompt may be harmless.
+    """
+    if not (args.initial_prompt or args.hass_token):
+        return
+
+    if loader.resolve_stt_library() != SttLibrary.FASTER_WHISPER:
+        return
+
+    if not is_distil_whisper(args.model):
+        return
+
+    _LOGGER.warning(
+        "Model '%s' is a Distil-Whisper model, which is not compatible with "
+        "prompting: --initial-prompt and --hass-token/--hass-api will degrade "
+        "transcription instead of improving it. Use a standard Whisper model "
+        "for name biasing.",
+        args.model,
+    )
 
 
 async def _load_names(args: argparse.Namespace) -> Optional["HassNameCache"]:
