@@ -155,6 +155,44 @@ docker run -it -p 10300:10300 -v /path/to/local/data:/data rhasspy/wyoming-whisp
 
 [Source](https://github.com/rhasspy/wyoming-addons/tree/master/whisper)
 
+### Health Check
+
+Both images carry a `HEALTHCHECK`, so `docker ps` reports `healthy` or
+`unhealthy` and a Compose stack can wait on it with `depends_on:` /
+`condition: service_healthy`. It sends the server a `Describe` and requires an
+`Info` with an ASR program back, rather than only opening a socket: the port is
+bound by the OS, so a connect-only check stays green even when the event loop is
+wedged, while a round trip proves the accept loop and the event handler are both
+still running.
+
+The first 5 minutes don't count against it, because the server only starts
+listening once the model is loaded — which means downloading it on first run —
+and it takes 3 consecutive failures to turn the container unhealthy, because
+transcription runs on the event loop and a check can time out behind a long
+request.
+
+To run it by hand:
+
+``` sh
+docker exec whisper \
+    /usr/src/.venv/bin/python3 -m wyoming_faster_whisper.health_check
+```
+
+It prints nothing and exits 0 when healthy, or prints `unhealthy: <reason>` and
+exits 1. That reason is what `docker inspect` shows under `.State.Health`.
+
+The URI it checks is `tcp://127.0.0.1:10300`, or `WYO_WHISPER_URI` when the
+container sets one (a listen-everywhere host like `0.0.0.0` is rewritten to
+loopback). A `--uri` passed to `docker run` instead of the variable is invisible
+to the check, so give it the same one:
+
+```yaml
+    healthcheck:
+      test: ["CMD", "/usr/src/.venv/bin/python3", "-m",
+             "wyoming_faster_whisper.health_check",
+             "--uri", "tcp://127.0.0.1:10400"]
+```
+
 ### GPU Image
 
 `Dockerfile.gpu` runs the speech-to-text backends on an NVIDIA GPU. **It is not

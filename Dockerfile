@@ -31,4 +31,12 @@ COPY ./ ./
 
 EXPOSE 10300
 
+# The server only starts listening once the model is loaded, which means
+# downloading it on first run -- hence the long start period, during which
+# failures don't count against --retries. --retries covers the other direction:
+# transcription runs on the event loop, so a check can time out behind a long
+# request without the server being unhealthy.
+HEALTHCHECK --interval=30s --timeout=20s --start-period=5m --retries=3 \
+    CMD ["/usr/src/.venv/bin/python3", "-m", "wyoming_faster_whisper.health_check"]
+
 ENTRYPOINT ["bash", "docker_run.sh"]
