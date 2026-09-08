@@ -25,6 +25,8 @@ script/run --model tiny-int8 --language en --uri 'tcp://0.0.0.0:10300' --data-di
 ```
 
 The `--model` can also be a HuggingFace model like `Systran/faster-distil-whisper-small.en`
+(but see [Distil-Whisper models are not compatible](#distil-whisper-models-are-not-compatible)
+if you want name biasing)
 
 **NOTE**: Models are downloaded to the first `--data-dir` directory.
 
@@ -94,6 +96,25 @@ prompt, ahead of anything discovered from Home Assistant.
 
 This biases `faster-whisper` and `qwen3-asr`, the backends that take a prompt.
 Others ignore it.
+
+### Distil-Whisper models are not compatible
+
+Distil-Whisper checkpoints (`Systran/faster-distil-whisper-*`, `distil-small.en`,
+`distil-large-v3`, …) were distilled without previous-text conditioning, so a
+prompt is at best wasted on them and at worst destroys the transcription. This
+applies to `--initial-prompt` as much as to `--hass-token`; the server warns at
+startup and sends the prompt anyway, since a very short one may be harmless.
+
+Measured on the same clean commands, comparing no prompt against a 29-name
+(~97-token) list:
+
+| Model | With a prompt |
+| --- | --- |
+| `small.en` | Works as intended: `Natalie Sparkly` → `Natalie's Heart Light` |
+| `distil-small.en` | Breaks from ~52 prompt tokens on: `avg_logprob` falls below -1.0, every temperature fails, output truncates (`Start a timer for 25 minutes` → `Start a timer.`) or loops (`Add Hot Dog, Hot Dog, Hot Dog, …`) |
+| `distil-large-v3` | Inert. No collapse at any size, but no biasing either — `Ecobee` still comes back `EcoBe` with the name in the prompt |
+
+Use a standard Whisper model to bias toward your names.
 
 ### Prompt cost on qwen3-asr
 

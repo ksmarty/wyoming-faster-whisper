@@ -10,6 +10,7 @@ from wyoming_faster_whisper.const import SttLibrary
 from wyoming_faster_whisper.models import (
     guess_model,
     guess_stt_library,
+    is_distil_whisper,
     vad_clip_enabled,
 )
 
@@ -194,3 +195,48 @@ def test_other_backends_keep_the_same_default_model_on_gpu(library) -> None:
         assert guess_model(library, language, is_arm=False, gpu=True) == guess_model(
             library, language, is_arm=False
         )
+
+
+# --- Distil-Whisper detection ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "Systran/faster-distil-whisper-small.en",
+        "Systran/faster-distil-whisper-large-v3",
+        "distil-small.en",
+        "distil-whisper/distil-large-v3",
+        "DISTIL-SMALL.EN",  # case-insensitive
+    ],
+)
+def test_distil_models_are_detected(model) -> None:
+    assert is_distil_whisper(model)
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        None,  # --model auto never resolves to a distil checkpoint
+        "tiny-int8",
+        "small.en",
+        "Systran/faster-whisper-large-v3",
+        "openai/whisper-tiny.en",
+    ],
+)
+def test_standard_models_are_not_detected(model) -> None:
+    assert not is_distil_whisper(model)
+
+
+def test_every_default_model_takes_a_prompt() -> None:
+    # A guessed model must never be one that biasing cannot work with.
+    for library in SttLibrary:
+        if library == SttLibrary.AUTO:
+            continue
+
+        for language in ("en", "de", "ru", "zh", None):
+            for is_arm in (False, True):
+                for gpu in (False, True):
+                    assert not is_distil_whisper(
+                        guess_model(library, language, is_arm=is_arm, gpu=gpu)
+                    )

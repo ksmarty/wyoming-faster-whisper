@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Warn at startup when `--initial-prompt` or `--hass-token` is used with a Distil-Whisper model, and document that these models are not compatible with prompting (#118 by @jfoxwoosh)
+  - Distil-Whisper was distilled without previous-text conditioning, so a prompt never helps it. `distil-small.en` is actively damaged: from about 52 prompt tokens on, `avg_logprob` drops below faster-whisper's -1.0 threshold, every temperature fails, and output that was correct unprompted comes back truncated (`Start a timer for 25 minutes` → `Start a timer.`) or looping (`Add Hot Dog, Hot Dog, Hot Dog, …`). Whether the transcript ends up wrong or empty then depends on `no_speech_prob` for that utterance
+  - `distil-large-v3` is inert rather than broken — stable at every prompt size, but with no biasing effect either, still returning `EcoBe` with `Ecobee` in the prompt
+  - The prompt is still sent, since the damage is size-dependent and a short `--initial-prompt` may be harmless. Standard Whisper models are unaffected: `small.en` is steady through a 97-token prompt and biasing works as intended there
+
 ## 3.7.0
 
 - Every command-line option can now also be set from the environment: `--some-option` reads `WYO_WHISPER_SOME_OPTION`, so a Compose stack can configure the container without rewriting its `command:` (#64 by @ffeliziani-tpmc, #112 by @DennisGaida)
