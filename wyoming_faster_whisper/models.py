@@ -300,6 +300,20 @@ def vad_clip_enabled(
     return stt_library in vad_clip_libraries
 
 
+def is_distil_whisper(model: Optional[str]) -> bool:
+    """Report whether a model id names a Distil-Whisper checkpoint.
+
+    Distil-Whisper was distilled without previous-text conditioning, so prompt
+    context never helps it. `distil-small.en` is actively damaged: a 52-token
+    prompt pushes avg_logprob below -1.0 and yields truncated or looping output
+    on audio it transcribes perfectly unprompted. `distil-large-v3` is instead
+    inert -- stable at every prompt size, but with no biasing effect either.
+    Nothing in the CTranslate2 config identifies a distilled checkpoint, so the
+    model id is the only signal available.
+    """
+    return (model is not None) and ("distil" in model.lower())
+
+
 def guess_stt_library(
     preferred_stt_library: SttLibrary,
     model: Optional[str],

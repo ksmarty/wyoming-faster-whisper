@@ -25,6 +25,8 @@ script/run --model tiny-int8 --language en --uri 'tcp://0.0.0.0:10300' --data-di
 ```
 
 The `--model` can also be a HuggingFace model like `Systran/faster-distil-whisper-small.en`
+(but see [Distil-Whisper models are not compatible](#distil-whisper-models-are-not-compatible)
+if you want name biasing)
 
 **NOTE**: Models are downloaded to the first `--data-dir` directory.
 
@@ -95,6 +97,25 @@ prompt, ahead of anything discovered from Home Assistant.
 This biases `faster-whisper` and `qwen3-asr`, the backends that take a prompt.
 Others ignore it.
 
+### Distil-Whisper models are not compatible
+
+Distil-Whisper checkpoints (`Systran/faster-distil-whisper-*`, `distil-small.en`,
+`distil-large-v3`, …) were distilled without previous-text conditioning, so a
+prompt is at best wasted on them and at worst destroys the transcription. This
+applies to `--initial-prompt` as much as to `--hass-token`; the server warns at
+startup and sends the prompt anyway, since a very short one may be harmless.
+
+Measured on the same clean commands, comparing no prompt against a 29-name
+(~97-token) list:
+
+| Model | With a prompt |
+| --- | --- |
+| `small.en` | Works as intended: `Natalie Sparkly` → `Natalie's Heart Light` |
+| `distil-small.en` | Breaks from ~52 prompt tokens on: `avg_logprob` falls below -1.0, every temperature fails, output truncates (`Start a timer for 25 minutes` → `Start a timer.`) or loops (`Add Hot Dog, Hot Dog, Hot Dog, …`) |
+| `distil-large-v3` | Inert. No collapse at any size, but no biasing either — `Ecobee` still comes back `EcoBe` with the name in the prompt |
+
+Use a standard Whisper model to bias toward your names.
+
 ### Prompt cost on qwen3-asr
 
 For `qwen3-asr` the prompt is not free: the model has to read it before it starts
@@ -133,6 +154,44 @@ docker run -it -p 10300:10300 -v /path/to/local/data:/data rhasspy/wyoming-whisp
 **NOTE**: Models are downloaded to `/data`, so make sure this points to a Docker volume.
 
 [Source](https://github.com/rhasspy/wyoming-addons/tree/master/whisper)
+
+### Health Check
+
+Both images carry a `HEALTHCHECK`, so `docker ps` reports `healthy` or
+`unhealthy` and a Compose stack can wait on it with `depends_on:` /
+`condition: service_healthy`. It sends the server a `Describe` and requires an
+`Info` with an ASR program back, rather than only opening a socket: the port is
+bound by the OS, so a connect-only check stays green even when the event loop is
+wedged, while a round trip proves the accept loop and the event handler are both
+still running.
+
+The first 5 minutes don't count against it, because the server only starts
+listening once the model is loaded — which means downloading it on first run —
+and it takes 3 consecutive failures to turn the container unhealthy, because
+transcription runs on the event loop and a check can time out behind a long
+request.
+
+To run it by hand:
+
+``` sh
+docker exec whisper \
+    /usr/src/.venv/bin/python3 -m wyoming_faster_whisper.health_check
+```
+
+It prints nothing and exits 0 when healthy, or prints `unhealthy: <reason>` and
+exits 1. That reason is what `docker inspect` shows under `.State.Health`.
+
+The URI it checks is `tcp://127.0.0.1:10300`, or `WYO_WHISPER_URI` when the
+container sets one (a listen-everywhere host like `0.0.0.0` is rewritten to
+loopback). A `--uri` passed to `docker run` instead of the variable is invisible
+to the check, so give it the same one:
+
+```yaml
+    healthcheck:
+      test: ["CMD", "/usr/src/.venv/bin/python3", "-m",
+             "wyoming_faster_whisper.health_check",
+             "--uri", "tcp://127.0.0.1:10400"]
+```
 
 ### GPU Image
 
