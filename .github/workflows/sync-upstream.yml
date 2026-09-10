@@ -39,6 +39,16 @@ jobs:
             echo "Already up to date. Nothing to push."
             exit 0
           fi
-          git merge upstream/main --no-edit
+          # Fork policy: this fork owns README.md (a barebones GPU-focused
+          # readme). Merge with --no-commit, then force the fork's README back
+          # in whether the merge conflicted on it or auto-merged cleanly, so
+          # upstream's version can never win here. Other fork-only files (the
+          # added workflows) have no upstream counterpart, so they cannot
+          # conflict. If any other file genuinely conflicts, the commit below
+          # fails and the run goes red for a human to resolve.
+          git merge upstream/main --no-edit --no-commit || true
+          git checkout HEAD -- README.md
+          git add README.md
+          git commit --no-edit
           git push origin main
           git push origin --tags || true
