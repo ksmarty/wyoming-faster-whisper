@@ -155,6 +155,45 @@ docker run -it -p 10300:10300 -v /path/to/local/data:/data rhasspy/wyoming-whisp
 
 [Source](https://github.com/rhasspy/wyoming-addons/tree/master/whisper)
 
+### Running Without Internet Access
+
+A model that is already downloaded is loaded from disk without contacting
+Hugging Face, so a container that has been started once keeps working on a
+network with no route out. Only a model that is *missing* is fetched.
+
+That matters on a network which drops outbound traffic rather than refusing it —
+a Docker bridge marked `internal`, for example. The update check that used to
+run on every start would sit there until the TCP connection timed out, and with
+`restart: always` the container boot-looped.
+
+To rule out downloads entirely, pass `--local-files-only` (or
+`WYO_WHISPER_LOCAL_FILES_ONLY=true`) once the models you want are in `/data`. A
+model that is not there is then an error instead of a download:
+
+```yaml
+services:
+  whisper:
+    image: rhasspy/wyoming-whisper
+    volumes:
+      - ./data:/data
+    environment:
+      WYO_WHISPER_MODEL: tiny-int8
+      WYO_WHISPER_LANGUAGE: en
+      WYO_WHISPER_LOCAL_FILES_ONLY: "true"
+    networks:
+      - no-internet
+
+networks:
+  no-internet:
+    internal: true
+```
+
+Both images point `HF_HOME`, `XDG_CACHE_HOME`, and `MODELSCOPE_CACHE` at `/data`
+so the caches these libraries keep outside the model directory land on the
+volume too. The largest is the Xet chunk cache used while downloading, which can
+run to several GB. Outside Docker, set them yourself if you don't want them in
+`~/.cache`.
+
 ### Health Check
 
 Both images carry a `HEALTHCHECK`, so `docker ps` reports `healthy` or

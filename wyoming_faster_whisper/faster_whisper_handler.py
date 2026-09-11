@@ -19,6 +19,7 @@ class FasterWhisperTranscriber(Transcriber):
         self,
         model_id: str,
         cache_dir: Union[str, Path],
+        local_files_only: bool = False,
         device: str = "cpu",
         compute_type: str = "default",
         cpu_threads: int = 4,
@@ -39,6 +40,7 @@ class FasterWhisperTranscriber(Transcriber):
         self.model = faster_whisper.WhisperModel(
             model_id,
             download_root=str(cache_dir),
+            local_files_only=local_files_only,
             device=ct2_device,
             compute_type=compute_type,
             cpu_threads=cpu_threads,

@@ -186,77 +186,129 @@ class ModelLoader:
             if transcriber is not None:
                 return transcriber
 
-            if stt_library == SttLibrary.SHERPA:
-                if streaming:
-                    from .sherpa_handler import SherpaStreamingTranscriber  # noqa: F811
-
-                    transcriber = SherpaStreamingTranscriber(
-                        model,
-                        self.download_dir,
-                        cpu_threads=self.cpu_threads,
-                        beam_size=self.beam_size,
-                        device=self.device,
-                    )
-                else:
-                    from .sherpa_handler import SherpaTranscriber  # noqa: F811
-
-                    transcriber = SherpaTranscriber(
-                        model,
-                        self.download_dir,
-                        cpu_threads=self.cpu_threads,
-                        device=self.device,
-                    )
-            elif stt_library == SttLibrary.ONNX_ASR:
-                from .onnx_asr_handler import OnnxAsrTranscriber  # noqa: F811
-
-                transcriber = OnnxAsrTranscriber(
-                    model,
-                    cache_dir=self.download_dir,
-                    local_files_only=self.local_files_only,
-                    device=self.device,
-                )
-            elif stt_library == SttLibrary.TRANSFORMERS:
-                from .transformers_whisper import TransformersTranscriber  # noqa: F811
-
-                transcriber = TransformersTranscriber(
-                    model,
-                    cache_dir=self.download_dir,
-                    local_files_only=self.local_files_only,
-                    device=self.device,
-                )
-            elif stt_library == SttLibrary.QWEN3_ASR:
-                from .qwen3_asr_handler import Qwen3AsrTranscriber  # noqa: F811
-
-                transcriber = Qwen3AsrTranscriber(
-                    model,
-                    cache_dir=self.download_dir,
-                    local_files_only=self.local_files_only,
-                    cpu_threads=self.cpu_threads,
-                    device=self.device,
-                )
-            elif stt_library == SttLibrary.FUNASR:
-                from .funasr_handler import FunASRTranscriber  # noqa: F811
-
-                transcriber = FunASRTranscriber(
-                    model,
-                    cache_dir=self.download_dir,
-                    local_files_only=self.local_files_only,
-                    device=self.device,
-                )
-            else:
-                transcriber = FasterWhisperTranscriber(
-                    model,
-                    cache_dir=self.download_dir,
-                    device=self.device,
-                    compute_type=self.compute_type,
-                    cpu_threads=self.cpu_threads,
-                    vad_parameters=self.vad_parameters,
-                    task=self.whisper_task,
-                )
-
+            transcriber = self._load_cache_first(stt_library, model, streaming)
             self._transcriber[key] = transcriber
 
         return transcriber
+
+    def _load_cache_first(
+        self, stt_library: SttLibrary, model: str, streaming: bool
+    ) -> Transcriber:
+        """Build a transcriber, preferring the cache over the network.
+
+        The hub check is what breaks when there is no internet, not the model
+        load: everything a cached model needs is already on disk. On a network
+        that blackholes outbound traffic (a Docker bridge marked `internal`) that
+        check stalls for the full TCP timeout on every start rather than failing
+        fast, which boot-loops the container. So try the cache first and only
+        reach for the network when a file is genuinely missing.
+
+        --local-files-only stays strict: no fallback, so a model that isn't
+        cached is an error instead of a surprise download.
+        """
+        if self.local_files_only:
+            return self._build_transcriber(
+                stt_library, model, streaming, local_files_only=True
+            )
+
+        try:
+            return self._build_transcriber(
+                stt_library, model, streaming, local_files_only=True
+            )
+        except OSError as exc:
+            # Every backend reports a cache miss as an OSError:
+            # huggingface_hub raises LocalEntryNotFoundError (a FileNotFoundError
+            # subclass), transformers raises a bare OSError, and the sherpa
+            # handler raises FileNotFoundError itself. A corrupt cache lands here
+            # too, and the retry below surfaces it as the download failing.
+            _LOGGER.debug("Model '%s' is not cached (%s), downloading", model, exc)
+
+        return self._build_transcriber(
+            stt_library, model, streaming, local_files_only=False
+        )
+
+    def _build_transcriber(
+        self,
+        stt_library: SttLibrary,
+        model: str,
+        streaming: bool,
+        local_files_only: bool,
+    ) -> Transcriber:
+        """Construct the transcriber for a backend."""
+        if stt_library == SttLibrary.SHERPA:
+            if streaming:
+                from .sherpa_handler import SherpaStreamingTranscriber  # noqa: F811
+
+                return SherpaStreamingTranscriber(
+                    model,
+                    self.download_dir,
+                    local_files_only=local_files_only,
+                    cpu_threads=self.cpu_threads,
+                    beam_size=self.beam_size,
+                    device=self.device,
+                )
+
+            from .sherpa_handler import SherpaTranscriber  # noqa: F811
+
+            return SherpaTranscriber(
+                model,
+                self.download_dir,
+                local_files_only=local_files_only,
+                cpu_threads=self.cpu_threads,
+                device=self.device,
+            )
+
+        if stt_library == SttLibrary.ONNX_ASR:
+            from .onnx_asr_handler import OnnxAsrTranscriber  # noqa: F811
+
+            return OnnxAsrTranscriber(
+                model,
+                cache_dir=self.download_dir,
+                local_files_only=local_files_only,
+                device=self.device,
+            )
+
+        if stt_library == SttLibrary.TRANSFORMERS:
+            from .transformers_whisper import TransformersTranscriber  # noqa: F811
+
+            return TransformersTranscriber(
+                model,
+                cache_dir=self.download_dir,
+                local_files_only=local_files_only,
+                device=self.device,
+            )
+
+        if stt_library == SttLibrary.QWEN3_ASR:
+            from .qwen3_asr_handler import Qwen3AsrTranscriber  # noqa: F811
+
+            return Qwen3AsrTranscriber(
+                model,
+                cache_dir=self.download_dir,
+                local_files_only=local_files_only,
+                cpu_threads=self.cpu_threads,
+                device=self.device,
+            )
+
+        if stt_library == SttLibrary.FUNASR:
+            from .funasr_handler import FunASRTranscriber  # noqa: F811
+
+            return FunASRTranscriber(
+                model,
+                cache_dir=self.download_dir,
+                local_files_only=local_files_only,
+                device=self.device,
+            )
+
+        return FasterWhisperTranscriber(
+            model,
+            cache_dir=self.download_dir,
+            local_files_only=local_files_only,
+            device=self.device,
+            compute_type=self.compute_type,
+            cpu_threads=self.cpu_threads,
+            vad_parameters=self.vad_parameters,
+            task=self.whisper_task,
+        )
 
     async def transcribe(
         self, wav_path: Union[str, Path], language: Optional[str]

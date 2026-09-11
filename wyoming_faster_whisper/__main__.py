@@ -167,7 +167,8 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--local-files-only",
         action="store_true",
-        help="Don't check HuggingFace hub for updates every time",
+        help="Never download a model: fail if it isn't already in --download-dir "
+        "(cached models are loaded without a download regardless)",
     )
     # Home Assistant name biasing (extra: hass)
     parser.add_argument(
