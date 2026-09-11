@@ -30,6 +30,29 @@ if you want name biasing)
 
 **NOTE**: Models are downloaded to the first `--data-dir` directory.
 
+## Server-side VAD Endpointing
+
+By default, the server waits for the client to send `audio-stop` before it
+transcribes. Set `--vad-endpointing` to a number of seconds to end the command
+after that much Silero-detected silence and send the transcript immediately:
+
+```sh
+script/run --uri 'tcp://0.0.0.0:10300' --data-dir /data \
+    --vad-endpointing 0.7
+```
+
+When enabled, the Wyoming service advertises that it does not require external
+VAD, so Home Assistant leaves endpointing to this server. Speech must be detected
+before the silence timer starts; brief pauses reset when speech resumes, and a
+command is allowed to run for at least one second. Audio received after the
+endpoint is ignored until the client's eventual `audio-stop`.
+
+This is independent of the existing VAD options. `--vad-filter` still controls
+Faster Whisper's filtering during transcription, while `--vad-clip` still trims
+the completed batch WAV before transcription. They can be used together with
+`--vad-endpointing`; the only intentional interaction is replacing Home
+Assistant's external endpointing while this option is enabled.
+
 ## Biasing Toward Your Home Assistant Names
 
 Whisper has never heard of your thermostat. "What's the temperature of the Ecobee?"
@@ -311,6 +334,7 @@ underscores and a `WYO_WHISPER_` prefix:
 | `--model` | `WYO_WHISPER_MODEL` |
 | `--language` | `WYO_WHISPER_LANGUAGE` |
 | `--stt-library` | `WYO_WHISPER_STT_LIBRARY` |
+| `--vad-endpointing` | `WYO_WHISPER_VAD_ENDPOINTING` |
 | `--hass-token` | `WYO_WHISPER_HASS_TOKEN` |
 | ...and so on for every option in `--help` | |
 
