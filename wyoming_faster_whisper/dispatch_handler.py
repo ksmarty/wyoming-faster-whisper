@@ -15,6 +15,7 @@ from wyoming.info import Describe, Info
 from wyoming.server import AsyncEventHandler
 
 from .const import StreamingSession, Transcriber
+from .endpointing import SileroEndpointDetector
 from .models import ModelLoader
 from .vad import clip_wav_to_speech
 
@@ -35,14 +36,20 @@ class DispatchEventHandler(AsyncEventHandler):
         loader: ModelLoader,
         names: Optional["HassNameCache"],
         *args,
+        vad_endpointing: Optional[float] = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
 
         self.wyoming_info_event = wyoming_info.event()
+        if vad_endpointing is not None and vad_endpointing <= 0:
+            raise ValueError("vad_endpointing must be greater than zero")
 
         self._loader = loader
         self._names = names
+        self._vad_endpointing = vad_endpointing
+        self._endpoint_detector: Optional[SileroEndpointDetector] = None
+        self._finished = False
         self._transcriber: Optional[Transcriber] = None
         self._transcriber_future: Optional[asyncio.Future] = None
         self._language: Optional[str] = None
@@ -68,6 +75,9 @@ class DispatchEventHandler(AsyncEventHandler):
 
     async def handle_event(self, event: Event) -> bool:
         if AudioStart.is_type(event.type):
+            self._finished = False
+            self._reset_endpoint_detector()
+
             # Start refreshing Home Assistant's names now. The speaker is still
             # talking, so the fetch has the length of their command to finish in
             # and costs no latency at all.
@@ -75,6 +85,9 @@ class DispatchEventHandler(AsyncEventHandler):
             return True
 
         if AudioChunk.is_type(event.type):
+            if self._finished:
+                return True
+
             chunk = self._audio_converter.convert(AudioChunk.from_event(event))
             self._got_audio = True
 
@@ -108,76 +121,25 @@ class DispatchEventHandler(AsyncEventHandler):
                 # Transcriber not ready yet: buffer until the path is known.
                 self._pending_audio.append(chunk.audio)
 
+            if self._vad_endpointing is not None:
+                if self._endpoint_detector is None:
+                    # Safety net for clients that send chunks without AudioStart.
+                    self._reset_endpoint_detector()
+
+                assert self._endpoint_detector is not None
+                if not self._endpoint_detector.process(chunk.audio):
+                    _LOGGER.debug(
+                        "Voice command ended after %.3f seconds of VAD silence",
+                        self._vad_endpointing,
+                    )
+                    await self._finish_utterance()
+
             return True
 
         if AudioStop.is_type(event.type):
             _LOGGER.debug("Audio stopped")
-            start_time = time.monotonic()
-
-            # No audio was received before AudioStop — return empty transcript.
-            # This happens when HA sends AudioStop without any AudioChunk
-            # (e.g., VAD detected no speech, or the client disconnected early).
-            if not self._got_audio:
-                _LOGGER.warning("AudioStop received with no audio data")
-                await self.write_event(Transcript(text="").event())
-                self._reset()
-                return False
-
-            # Get the transcriber that was loading in the background.
-            if self._transcriber is None:
-                if self._transcriber_future is None:
-                    _LOGGER.warning("No transcriber available")
-                    await self.write_event(Transcript(text="").event())
-                    self._reset()
-                    return False
-                self._transcriber = await self._transcriber_future
-
-            # If audio arrived before the transcriber was ready, the path may
-            # still be undecided — commit it now using the buffered audio.
-            if self._is_streaming is None:
-                await self._commit_path()
-
-            if self._is_streaming:
-                assert self._session is not None
-                text = await asyncio.to_thread(self._session.finish)
-            else:
-                assert self._wav_file is not None
-                self._wav_file.close()
-                self._wav_file = None
-
-                # Optionally clip leading/trailing silence before transcription.
-                # This operates on the WAV, so any batch transcriber can use it;
-                # --vad-clip decides which libraries actually do. Streaming
-                # transcribers never reach this path.
-                wav_path = self._wav_path
-                if self._loader.should_vad_clip(
-                    self._language
-                ) and await asyncio.to_thread(
-                    clip_wav_to_speech,
-                    self._wav_path,
-                    self._clipped_wav_path,
-                    self._loader.vad_clip_threshold,
-                    self._loader.vad_clip_pad_ms,
-                ):
-                    wav_path = self._clipped_wav_path
-
-                # Do transcription in a separate thread
-                text = await asyncio.to_thread(
-                    self._transcriber.transcribe,
-                    wav_path,
-                    self._language,
-                    beam_size=self._loader.beam_size,
-                    initial_prompt=await self._initial_prompt(),
-                )
-
-            end_time = time.monotonic()
-            _LOGGER.info(text)
-
-            await self.write_event(Transcript(text=text).event())
-            _LOGGER.debug("Completed request in %s second(s)", end_time - start_time)
-
+            await self._finish_utterance()
             self._reset()
-
             return False
 
         if Transcribe.is_type(event.type):
@@ -193,6 +155,79 @@ class DispatchEventHandler(AsyncEventHandler):
             return True
 
         return True
+
+    async def _finish_utterance(self) -> None:
+        """Transcribe and answer the current stream exactly once."""
+        if self._finished:
+            return
+
+        self._finished = True
+        start_time = time.monotonic()
+
+        # No audio was received before the stream ended.
+        if not self._got_audio:
+            _LOGGER.warning("Finishing utterance with no audio data")
+            await self.write_event(Transcript(text="").event())
+            return
+
+        # Get the transcriber that was loading in the background.
+        if self._transcriber is None:
+            if self._transcriber_future is None:
+                _LOGGER.warning("No transcriber available")
+                await self.write_event(Transcript(text="").event())
+                return
+            self._transcriber = await self._transcriber_future
+
+        # If audio arrived before the transcriber was ready, the path may
+        # still be undecided — commit it now using the buffered audio.
+        if self._is_streaming is None:
+            await self._commit_path()
+
+        if self._is_streaming:
+            assert self._session is not None
+            text = await asyncio.to_thread(self._session.finish)
+        else:
+            assert self._wav_file is not None
+            self._wav_file.close()
+            self._wav_file = None
+
+            # Optionally clip leading/trailing silence before transcription.
+            # This operates on the WAV, so any batch transcriber can use it;
+            # --vad-clip decides which libraries actually do. Streaming
+            # transcribers never reach this path.
+            wav_path = self._wav_path
+            if self._loader.should_vad_clip(self._language) and await asyncio.to_thread(
+                clip_wav_to_speech,
+                self._wav_path,
+                self._clipped_wav_path,
+                self._loader.vad_clip_threshold,
+                self._loader.vad_clip_pad_ms,
+            ):
+                wav_path = self._clipped_wav_path
+
+            # Do transcription in a separate thread
+            text = await asyncio.to_thread(
+                self._transcriber.transcribe,
+                wav_path,
+                self._language,
+                beam_size=self._loader.beam_size,
+                initial_prompt=await self._initial_prompt(),
+            )
+
+        end_time = time.monotonic()
+        _LOGGER.info(text)
+
+        await self.write_event(Transcript(text=text).event())
+        _LOGGER.debug("Completed request in %s second(s)", end_time - start_time)
+
+    def _reset_endpoint_detector(self) -> None:
+        """Create or reset endpointing for a new normalized audio stream."""
+        if self._vad_endpointing is None:
+            return
+
+        if self._endpoint_detector is None:
+            self._endpoint_detector = SileroEndpointDetector(self._vad_endpointing)
+        self._endpoint_detector.reset()
 
     def _refresh_names(self) -> None:
         """Kick off one background refresh of Home Assistant's names per utterance.
@@ -273,6 +308,7 @@ class DispatchEventHandler(AsyncEventHandler):
         self._language = None
         self._transcriber = None
         self._transcriber_future = None
+        self._finished = False
         self._got_audio = False
         self._is_streaming = None
         self._session = None

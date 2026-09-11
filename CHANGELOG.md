@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add optional `--vad-endpointing SECONDS` server-side command endpointing, based
+  on speech-to-phrase's Silero VAD segmenter. It sends the transcript after the
+  configured post-speech silence instead of waiting for `audio-stop`, advertises
+  that external VAD is not required while enabled, and remains independent of
+  the transcription-time `--vad-filter` and `--vad-clip` options
+
 - Models that are already downloaded now load without contacting Hugging Face, so a server with no route to the internet starts instead of boot-looping (#93 by @schuylermartin45, #92)
   - Loading is cache-first by default: each backend is built with `local_files_only` and only retried as a download when a file is genuinely missing. The hub check is what fails without internet, not the model load, and on a network that drops outbound traffic rather than refusing it — a Docker bridge marked `internal` — it stalled for the full TCP timeout on every start
   - `--local-files-only` still means what it says: no fallback, so a model that isn't cached is an error rather than a surprise download. It had no effect at all on faster-whisper, the default backend, which never received the flag
@@ -164,4 +170,3 @@
 ## 1.0.0
 
 - Initial release
-

@@ -55,9 +55,14 @@ def test_command_line_wins() -> None:
 
 def test_type_conversion() -> None:
     """Values go through the option's own type."""
-    args = run(WYO_WHISPER_BEAM_SIZE="3", WYO_WHISPER_VAD_THRESHOLD="0.25")
+    args = run(
+        WYO_WHISPER_BEAM_SIZE="3",
+        WYO_WHISPER_VAD_THRESHOLD="0.25",
+        WYO_WHISPER_VAD_ENDPOINTING="0.7",
+    )
     assert args.beam_size == 3
     assert args.vad_threshold == 0.25
+    assert args.vad_endpointing == 0.7
 
 
 def test_invalid_type(capsys: pytest.CaptureFixture) -> None:
@@ -66,6 +71,13 @@ def test_invalid_type(capsys: pytest.CaptureFixture) -> None:
         run(WYO_WHISPER_BEAM_SIZE="large")
 
     assert "WYO_WHISPER_BEAM_SIZE" in capsys.readouterr().err
+
+
+def test_vad_endpointing_must_be_positive(capsys: pytest.CaptureFixture) -> None:
+    with pytest.raises(SystemExit):
+        run(WYO_WHISPER_VAD_ENDPOINTING="0")
+
+    assert "WYO_WHISPER_VAD_ENDPOINTING" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
