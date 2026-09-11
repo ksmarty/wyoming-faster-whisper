@@ -74,9 +74,15 @@ COPY ./ ./
 
 # docker_run.sh reads STT_DEVICE; an explicit --device on the command line still
 # wins, since user arguments are appended after it.
+#
+# HF_HOME/XDG_CACHE_HOME/MODELSCOPE_CACHE keep the library caches on the /data
+# volume; see the CPU image for why they have to be set here and not in Python.
 ENV STT_DEVICE=cuda \
     NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    HF_HOME=/data \
+    XDG_CACHE_HOME=/data \
+    MODELSCOPE_CACHE=/data/modelscope
 
 EXPOSE 10300
 

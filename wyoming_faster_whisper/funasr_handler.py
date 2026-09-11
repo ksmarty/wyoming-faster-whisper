@@ -1,7 +1,6 @@
 """Code for transcription using the FunASR library."""
 
 import contextlib
-import os
 import sys
 import wave
 from pathlib import Path
@@ -13,7 +12,9 @@ from typing import Optional, Union
 # onnx_asr_handler/transformers_whisper.
 import numpy as np
 from funasr import AutoModel
+from funasr.download.name_maps_from_hub import name_maps_hf
 from funasr.utils.postprocess_utils import rich_transcription_postprocess
+from huggingface_hub import snapshot_download
 
 from .const import Transcriber, sense_voice_language
 from .device import torch_device
@@ -32,22 +33,41 @@ class FunASRTranscriber(Transcriber):
         device: str = "cpu",
     ) -> None:
         """Initialize model."""
-        # FunASR (hub="hf") downloads via huggingface_hub; honor the cache dir.
-        os.environ.setdefault("HF_HOME", str(Path(cache_dir).resolve()))
-        if local_files_only:
-            # FunASR's AutoModel has no local_files_only flag; gate downloads
-            # via the huggingface_hub environment variable instead.
-            os.environ.setdefault("HF_HUB_OFFLINE", "1")
-
         self._postprocess = rich_transcription_postprocess
         self._is_sense_voice = "SenseVoice" in model_id
+
+        # Resolve the model directory before handing it to FunASR. Left to
+        # itself, FunASR calls snapshot_download(model) with no arguments of its
+        # own -- so the model lands in the default hub cache rather than
+        # cache_dir -- and then swallows any download error ("Download: ...
+        # failed!") before failing later with an unrelated "model is not
+        # registered". Downloading here keeps the files where they belong and
+        # lets a cache miss surface as the LocalEntryNotFoundError that
+        # ModelLoader needs to see. Passing a directory skips FunASR's own
+        # download path entirely.
+        #
+        # The environment variables that would otherwise control this (HF_HOME,
+        # HF_HUB_OFFLINE) are no help: huggingface_hub reads them into constants
+        # at import time, and FunASR has already imported it by way of
+        # transformers before we get here.
+        model_dir = Path(model_id)
+        if not model_dir.is_dir():
+            model_dir = Path(
+                snapshot_download(
+                    # FunASR accepts short aliases ("paraformer-zh") as well as
+                    # repo ids; snapshot_download only knows repo ids.
+                    name_maps_hf.get(model_id, model_id),
+                    cache_dir=str(Path(cache_dir).resolve()),
+                    local_files_only=local_files_only,
+                )
+            )
 
         # FunASR prints a "funasr version: ..." banner to stdout when a model is
         # built. With the stdio:// transport that line corrupts the Wyoming
         # protocol, so redirect stdout to stderr while loading.
         with contextlib.redirect_stdout(sys.stderr):
             self.model = AutoModel(
-                model=model_id,
+                model=str(model_dir),
                 hub="hf",
                 device=torch_device(device),
                 disable_update=True,
