@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.8.0
 
 - Add optional `--vad-endpointing SECONDS` server-side command endpointing, based
   on speech-to-phrase's Silero VAD segmenter. It sends the transcript after the
