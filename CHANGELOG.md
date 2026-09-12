@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## 3.8.0
+
+- Add optional `--vad-endpointing SECONDS` server-side command endpointing, based
+  on speech-to-phrase's Silero VAD segmenter. It sends the transcript after the
+  configured post-speech silence instead of waiting for `audio-stop`, advertises
+  that external VAD is not required while enabled, and remains independent of
+  the transcription-time `--vad-filter` and `--vad-clip` options
+
+- Models that are already downloaded now load without contacting Hugging Face, so a server with no route to the internet starts instead of boot-looping (#93 by @schuylermartin45, #92)
+  - Loading is cache-first by default: each backend is built with `local_files_only` and only retried as a download when a file is genuinely missing. The hub check is what fails without internet, not the model load, and on a network that drops outbound traffic rather than refusing it — a Docker bridge marked `internal` — it stalled for the full TCP timeout on every start
+  - `--local-files-only` still means what it says: no fallback, so a model that isn't cached is an error rather than a surprise download. It had no effect at all on faster-whisper, the default backend, which never received the flag
+  - FunASR ignored `--download-dir` entirely, putting its ~900 MB of models in `~/.cache/huggingface` instead, and reported a failed download as `model ... is not registered` several steps later. Its model directory is now resolved before FunASR is handed the model
+  - Sherpa models, which come from GitHub releases rather than the hub, are covered too
+- Both Docker images set `HF_HOME`, `XDG_CACHE_HOME`, and `MODELSCOPE_CACHE` to `/data` so the caches that no command-line option reaches also land on the volume
+  - The Xet chunk cache used during hub downloads (`$HF_HOME/xet`) is the big one: several GB, previously written to the container's filesystem
+  - It also fixes the unwritable `/.cache` that a container running as a uid with no passwd entry would hit, since `$HOME` is unset there
 
 - Add a Docker health check to both images, matching the one in wyoming-piper 2.4.3 (#119 by @netsho)
   - It sends the server a `Describe` and requires an `Info` with an ASR program back, rather than only opening a socket: the port is bound by the OS, so a connect-only check stays green even when the event loop is wedged, while a round trip proves the accept loop and the event handler are both still running
@@ -155,4 +170,3 @@
 ## 1.0.0
 
 - Initial release
-

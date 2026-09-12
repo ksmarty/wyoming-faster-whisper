@@ -175,8 +175,17 @@ def _names(*entities) -> RecognitionContext:
     return RecognitionContext(priority_entities=list(entities))
 
 
-def _handler(transcriber, names=None, initial_prompt=None) -> Handler:
-    return Handler(Info(), FakeLoader(transcriber, initial_prompt), names, None, None)
+def _handler(
+    transcriber, names=None, initial_prompt=None, vad_endpointing=None
+) -> Handler:
+    return Handler(
+        Info(),
+        FakeLoader(transcriber, initial_prompt),
+        names,
+        None,
+        None,
+        vad_endpointing=vad_endpointing,
+    )
 
 
 def _cache(hass, **kwargs) -> HassNameCache:
@@ -379,6 +388,39 @@ async def test_audio_stop_with_no_audio_returns_an_empty_transcript():
 
     assert handler.transcript == ""
     assert not transcriber.calls
+
+
+class ImmediateEndpoint:
+    def reset(self) -> None:
+        pass
+
+    def process(self, _audio: bytes) -> bool:
+        return False
+
+
+async def test_vad_endpointing_sends_one_transcript_before_audio_stop():
+    transcriber = FakeTranscriber()
+    handler = _handler(transcriber, vad_endpointing=0.7)
+    handler._endpoint_detector = ImmediateEndpoint()
+
+    await handler.handle_event(AudioStart(rate=RATE, width=2, channels=1).event())
+    await handler.handle_event(
+        AudioChunk(audio=b"\x00\x00" * 160, rate=RATE, width=2, channels=1).event()
+    )
+
+    assert handler.transcript == "fake transcript"
+    assert len(transcriber.calls) == 1
+
+    # Chunks sent while the client is still working toward AudioStop are ignored,
+    # and AudioStop does not generate a duplicate transcript.
+    await handler.handle_event(
+        AudioChunk(audio=b"\x00\x00" * 160, rate=RATE, width=2, channels=1).event()
+    )
+    await handler.handle_event(AudioStop().event())
+
+    transcripts = [event for event in handler.written if Transcript.is_type(event.type)]
+    assert len(transcripts) == 1
+    assert len(transcriber.calls) == 1
 
 
 # --- streaming path ------------------------------------------------------

@@ -25,13 +25,23 @@ _URL_FORMAT = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-model
 _TAIL_PADDING_SECONDS = 0.66
 
 
-def _ensure_model(model_id: str, cache_dir: Union[str, Path]) -> Path:
+def _ensure_model(
+    model_id: str, cache_dir: Union[str, Path], local_files_only: bool = False
+) -> Path:
     """Download/extract a sherpa-onnx model if needed and return its directory."""
     cache_dir = Path(cache_dir)
     model_dir = cache_dir / model_id
     _LOGGER.debug("Looking for sherpa model: %s", model_dir)
 
     if not model_dir.exists():
+        if local_files_only:
+            # FileNotFoundError so ModelLoader can treat a sherpa cache miss the
+            # same as huggingface_hub's LocalEntryNotFoundError.
+            raise FileNotFoundError(
+                f"Sherpa model '{model_id}' is not in {cache_dir} and downloading "
+                "is disabled by --local-files-only"
+            )
+
         url = _URL_FORMAT.format(model_id=model_id)
         _LOGGER.info("Downloading %s", url)
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -125,11 +135,12 @@ class SherpaTranscriber(Transcriber):
         self,
         model_id: str,
         cache_dir: Union[str, Path],
+        local_files_only: bool = False,
         cpu_threads: int = 4,
         device: str = "cpu",
     ) -> None:
         """Initialize model."""
-        model_dir = _ensure_model(model_id, cache_dir)
+        model_dir = _ensure_model(model_id, cache_dir, local_files_only)
         provider = _resolve_provider(device)
         prefer_int8 = provider == "cpu"
 
@@ -186,12 +197,13 @@ class SherpaStreamingTranscriber(Transcriber):
         self,
         model_id: str,
         cache_dir: Union[str, Path],
+        local_files_only: bool = False,
         cpu_threads: int = 4,
         beam_size: int = 5,
         device: str = "cpu",
     ) -> None:
         """Initialize model."""
-        model_dir = _ensure_model(model_id, cache_dir)
+        model_dir = _ensure_model(model_id, cache_dir, local_files_only)
         provider = _resolve_provider(device)
         prefer_int8 = provider == "cpu"
 

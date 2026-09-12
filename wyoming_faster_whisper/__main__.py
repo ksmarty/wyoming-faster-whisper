@@ -32,6 +32,14 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+def positive_float(value: str) -> float:
+    """Parse a strictly positive floating-point command-line value."""
+    number = float(value)
+    if number <= 0:
+        raise ValueError("must be greater than zero")
+    return number
+
+
 def get_parser() -> argparse.ArgumentParser:
     """Return the command-line parser.
 
@@ -132,6 +140,12 @@ def get_parser() -> argparse.ArgumentParser:
         help="VAD minimum silence duration in ms to split (default: 2000, faster-whisper only)",
     )
     parser.add_argument(
+        "--vad-endpointing",
+        type=positive_float,
+        help="End a command and send its transcript after this many seconds of "
+        "VAD-detected silence (default: wait for audio-stop)",
+    )
+    parser.add_argument(
         "--vad-clip",
         nargs="*",
         metavar="STT_LIBRARY",
@@ -167,7 +181,8 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--local-files-only",
         action="store_true",
-        help="Don't check HuggingFace hub for updates every time",
+        help="Never download a model: fail if it isn't already in --download-dir "
+        "(cached models are loaded without a download regardless)",
     )
     # Home Assistant name biasing (extra: hass)
     parser.add_argument(
@@ -262,39 +277,9 @@ async def main() -> None:
     if args.model == AUTO_MODEL:
         args.model = None
 
-    wyoming_info = Info(
-        asr=[
-            AsrProgram(
-                name="faster-whisper",
-                description="Faster Whisper transcription with CTranslate2",
-                attribution=Attribution(
-                    name="Guillaume Klein",
-                    url="https://github.com/guillaumekln/faster-whisper/",
-                ),
-                installed=True,
-                version=__version__,
-                models=[
-                    AsrModel(
-                        name=model_name,
-                        description=model_name,
-                        attribution=Attribution(
-                            name="Systran",
-                            url="https://huggingface.co/Systran",
-                        ),
-                        installed=True,
-                        languages=sorted(
-                            list(
-                                # pylint: disable=protected-access
-                                set(faster_whisper.tokenizer._LANGUAGE_CODES).union(
-                                    PARAKEET_LANGUAGES
-                                )
-                            )
-                        ),
-                        version=faster_whisper.__version__,
-                    )
-                ],
-            )
-        ],
+    wyoming_info = build_info(
+        model_name,
+        requires_external_vad=args.vad_endpointing is None,
     )
 
     vad_parameters: Optional[Dict[str, Any]] = None
@@ -355,7 +340,47 @@ async def main() -> None:
             wyoming_info,
             loader,
             names,
+            vad_endpointing=args.vad_endpointing,
         )
+    )
+
+
+def build_info(model_name: str, *, requires_external_vad: bool = True) -> Info:
+    """Build Wyoming service metadata."""
+    return Info(
+        asr=[
+            AsrProgram(
+                name="faster-whisper",
+                description="Faster Whisper transcription with CTranslate2",
+                attribution=Attribution(
+                    name="Guillaume Klein",
+                    url="https://github.com/guillaumekln/faster-whisper/",
+                ),
+                installed=True,
+                version=__version__,
+                requires_external_vad=requires_external_vad,
+                models=[
+                    AsrModel(
+                        name=model_name,
+                        description=model_name,
+                        attribution=Attribution(
+                            name="Systran",
+                            url="https://huggingface.co/Systran",
+                        ),
+                        installed=True,
+                        languages=sorted(
+                            list(
+                                # pylint: disable=protected-access
+                                set(faster_whisper.tokenizer._LANGUAGE_CODES).union(
+                                    PARAKEET_LANGUAGES
+                                )
+                            )
+                        ),
+                        version=faster_whisper.__version__,
+                    )
+                ],
+            )
+        ],
     )
 
 

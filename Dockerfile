@@ -29,6 +29,20 @@ RUN \
 
 COPY ./ ./
 
+# Keep every cache on the /data volume instead of the container's filesystem.
+# Model files already go there (--download-dir defaults to the first --data-dir),
+# but the libraries also write caches that no per-call argument reaches: the Xet
+# chunk cache used during hub downloads is $HF_HOME/xet and can run to several
+# GB, and torch/others fall back to $XDG_CACHE_HOME. Unset, all of that lands in
+# $HOME/.cache - which is thrown away on every container recreate, and is an
+# unwritable /.cache when the container runs as a uid with no passwd entry.
+#
+# These have to be environment variables: huggingface_hub reads them into
+# constants at import time, so setting them from Python would be too late.
+ENV HF_HOME=/data \
+    XDG_CACHE_HOME=/data \
+    MODELSCOPE_CACHE=/data/modelscope
+
 EXPOSE 10300
 
 # The server only starts listening once the model is loaded, which means

@@ -8,6 +8,7 @@ import pytest
 
 from wyoming_faster_whisper.const import SttLibrary
 from wyoming_faster_whisper.models import (
+    ModelLoader,
     guess_model,
     guess_stt_library,
     is_distil_whisper,
@@ -240,3 +241,83 @@ def test_every_default_model_takes_a_prompt() -> None:
                     assert not is_distil_whisper(
                         guess_model(library, language, is_arm=is_arm, gpu=gpu)
                     )
+
+
+# --- cache-first loading --------------------------------------------------
+
+
+def _loader(**kwargs) -> ModelLoader:
+    """Build a ModelLoader with the arguments the cache-first path cares about."""
+    return ModelLoader(
+        preferred_stt_library=SttLibrary.FASTER_WHISPER,
+        preferred_language="en",
+        download_dir="/data",
+        local_files_only=kwargs.pop("local_files_only", False),
+        model="Systran/faster-whisper-base",
+        compute_type="default",
+        device="cpu",
+        beam_size=5,
+        cpu_threads=4,
+        initial_prompt=None,
+        vad_parameters=None,
+        **kwargs,
+    )
+
+
+def _record_attempts(loader: ModelLoader, fail_cached: bool) -> list:
+    """Replace backend construction with a recorder of local_files_only values."""
+    attempts: list = []
+
+    def build(stt_library, model, streaming, local_files_only):
+        attempts.append(local_files_only)
+        if local_files_only and fail_cached:
+            # What huggingface_hub raises for a cache miss.
+            raise FileNotFoundError("not cached")
+
+        return f"transcriber(local_files_only={local_files_only})"
+
+    loader._build_transcriber = build  # type: ignore[method-assign]
+    return attempts
+
+
+@pytest.mark.asyncio
+async def test_cached_model_is_loaded_without_the_hub() -> None:
+    # The common case: the model is on disk, so nothing should reach the network
+    # even though --local-files-only was not passed.
+    loader = _loader()
+    attempts = _record_attempts(loader, fail_cached=False)
+
+    assert await loader.load_transcriber() == "transcriber(local_files_only=True)"
+    assert attempts == [True]
+
+
+@pytest.mark.asyncio
+async def test_missing_model_falls_back_to_downloading() -> None:
+    loader = _loader()
+    attempts = _record_attempts(loader, fail_cached=True)
+
+    assert await loader.load_transcriber() == "transcriber(local_files_only=False)"
+    assert attempts == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_local_files_only_does_not_fall_back() -> None:
+    # Explicitly asking for offline means a missing model is an error, not a
+    # download.
+    loader = _loader(local_files_only=True)
+    attempts = _record_attempts(loader, fail_cached=True)
+
+    with pytest.raises(FileNotFoundError):
+        await loader.load_transcriber()
+
+    assert attempts == [True]
+
+
+@pytest.mark.asyncio
+async def test_transcriber_is_only_built_once() -> None:
+    loader = _loader()
+    attempts = _record_attempts(loader, fail_cached=True)
+
+    first = await loader.load_transcriber()
+    assert await loader.load_transcriber() is first
+    assert attempts == [True, False]
