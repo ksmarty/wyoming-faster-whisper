@@ -24,6 +24,8 @@ classifiers = [
 dependencies = [
     "wyoming>=1.10.2,<2",
     "faster-whisper>=1.2.1,<2",
+    # faster-whisper 1.2.1 passes metadata_errors to av.open(), which PyAV 19 removed
+    "av>=11,<19",
     "pysilero-vad>=3.4.0,<4",
 ]
 
