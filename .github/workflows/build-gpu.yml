@@ -17,7 +17,10 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a publish in flight: a docs push, or the sync workflow
+  # dispatching while a push build runs, must not leave `latest` pointing at an
+  # older commit. A superseded build finishes, and the newer one overwrites it.
+  cancel-in-progress: false
 
 permissions:
   contents: read
