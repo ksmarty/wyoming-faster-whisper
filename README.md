@@ -13,10 +13,14 @@ Two workflows keep this fork current without manual steps:
 - **Sync Upstream** (`.github/workflows/sync-upstream.yml`, daily) merges
   `OHF-Voice/wyoming-faster-whisper` into `main`, keeps this README, and
   re-applies the fork guard in `publish.yml` via `script/fork_policy.py`.
+  A conflict anywhere else stops the run and leaves the tree untouched, so a
+  human resolves it; when upstream has nothing new the run ends green and
+  pushes nothing.
 - **Build and Push GPU Image** (`.github/workflows/build-gpu.yml`) runs the
   upstream test suite, then publishes `ghcr.io/ksmarty/wyoming-whisper-gpu`
-  (`latest`, the version, and the commit sha). The sync workflow dispatches it,
-  because a push made with `GITHUB_TOKEN` does not trigger workflows.
+  tagged `latest` and with the commit sha (a release tag also gets the
+  version). The sync workflow dispatches it, because a push made with
+  `GITHUB_TOKEN` does not trigger workflows.
 
 ## Run the GPU version
 
