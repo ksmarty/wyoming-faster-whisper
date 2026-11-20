@@ -48,8 +48,11 @@ jobs:
           set -euo pipefail
           git checkout main
 
-          if [ "$(git rev-parse main)" = "$(git rev-parse upstream/main)" ]; then
-            echo "Already up to date. Nothing to push."
+          # main always carries the fork's own commits, so comparing revisions
+          # with upstream/main never matches. What matters is whether upstream
+          # has any commit main does not already contain.
+          if [ "$(git rev-list --count main..upstream/main)" -eq 0 ]; then
+            echo "Upstream has no commits that main does not already contain."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -86,6 +89,15 @@ jobs:
 
           python3 script/fork_policy.py
           git add .github/workflows/publish.yml
+
+          # A merge of content main already has (upstream merged our way, or a
+          # cherry-pick) leaves no MERGE_HEAD and nothing staged. That is not a
+          # failure: report it and let the workflow finish green.
+          if [ ! -f .git/MERGE_HEAD ] && git diff --cached --quiet; then
+            echo "Upstream changes are already present in main. Nothing to commit."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           git commit --no-edit
           echo "changed=true" >> "$GITHUB_OUTPUT"
