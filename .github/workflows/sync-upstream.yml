@@ -121,7 +121,9 @@ jobs:
         run: |
           # The push above used GITHUB_TOKEN, so it did not start build-gpu.yml.
           # Dispatch it explicitly: the workflow checks out main (the merge
-          # commit) and only publishes after its own test job passes.
-          gh workflow run build-gpu.yml --ref main
+          # commit) and only publishes after its own test job passes. --repo is
+          # explicit because this repository has an upstream remote and gh
+          # otherwise resolves to OHF-Voice's copy.
+          gh workflow run build-gpu.yml --repo "$GITHUB_REPOSITORY" --ref main
           sleep 10
-          gh run list --workflow build-gpu.yml --limit 3
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow build-gpu.yml --limit 3
