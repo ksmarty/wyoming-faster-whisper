@@ -62,7 +62,7 @@ jobs:
           # publish.yml as-is and let script/fork_policy.py re-apply the fork
           # guard. Any OTHER conflicted file is a real one: abort and go red for
           # a human instead of guessing.
-          git merge upstream/main --no-edit --no-commit || true
+          git merge upstream/main --no-ff --no-edit --no-commit || true
 
           git checkout HEAD -- README.md
           git add README.md

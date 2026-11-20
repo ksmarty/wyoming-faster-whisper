@@ -50,7 +50,13 @@ def main() -> None:
         if nxt < len(lines) and GUARD in lines[nxt]:
             continue
 
-        lines[index + 1 : index + 1] = [NOTE, "    " + GUARD]
+        if nxt < len(lines) and lines[nxt].lstrip().startswith("if:"):
+            # Upstream added its own condition: ours replaces it, because two
+            # `if:` keys in one mapping is invalid YAML and this job must not
+            # run in the fork at all.
+            lines[nxt : nxt + 1] = [NOTE, "    " + GUARD]
+        else:
+            lines[index + 1 : index + 1] = [NOTE, "    " + GUARD]
         added += 1
 
     WORKFLOW.write_text("\n".join(lines) + "\n", encoding="utf-8")
