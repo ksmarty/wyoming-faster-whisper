@@ -8,11 +8,18 @@ on:
       - "v*.*.*" # e.g. v1.2.3
 
 jobs:
-  build:
-    # Only meaningful in the upstream repo. The fork's sync workflow pushes
-    # upstream's release tags, and this workflow would fail at the DockerHub
-    # login step there (no DOCKERHUB_* secrets). Dependent jobs skip with it.
+  # Nothing is built or published unless the tagged commit passes tests and lint
+  test:
+    # Fork policy: upstream only; re-applied by script/fork_policy.py.
     if: github.repository_owner == 'OHF-Voice'
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+
+  build:
+    # Fork policy: upstream only; re-applied by script/fork_policy.py.
+    if: github.repository_owner == 'OHF-Voice'
+    needs: test
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.read_ver.outputs.tag }}
@@ -106,6 +113,8 @@ jobs:
   # is running Docker directly and can build it locally. See the README.
 
   changelog:
+    # Fork policy: upstream only; re-applied by script/fork_policy.py.
+    if: github.repository_owner == 'OHF-Voice'
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -173,6 +182,8 @@ jobs:
           path: RELEASE_NOTES.md
 
   publish:
+    # Fork policy: upstream only; re-applied by script/fork_policy.py.
+    if: github.repository_owner == 'OHF-Voice'
     needs: [build, changelog]
     runs-on: ubuntu-latest
     environment: pypi
@@ -193,6 +204,8 @@ jobs:
           verbose: true
 
   github_release:
+    # Fork policy: upstream only; re-applied by script/fork_policy.py.
+    if: github.repository_owner == 'OHF-Voice'
     needs: [build, changelog]
     runs-on: ubuntu-latest
     permissions:

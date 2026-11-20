@@ -6,8 +6,17 @@ on:
     - cron: "0 8 * * *"
   workflow_dispatch:
 
+# contents: write for the merge push and the tags. actions: write to dispatch
+# the image build by hand, because a push made with the repository's
+# GITHUB_TOKEN does not start other workflows (workflow_dispatch is the
+# documented exception).
 permissions:
   contents: write
+  actions: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
   sync:
@@ -26,29 +35,81 @@ jobs:
 
       - name: Add upstream remote
         run: |
-          git remote add upstream https://github.com/OHF-Voice/wyoming-faster-whisper.git || true
+          git remote add upstream https://github.com/OHF-Voice/wyoming-faster-whisper.git \
+            || git remote set-url upstream https://github.com/OHF-Voice/wyoming-faster-whisper.git
 
       - name: Fetch upstream
-        run: |
-          git fetch upstream --tags
+        run: git fetch upstream --tags --force
 
-      - name: Merge and push upstream changes
+      - name: Merge and commit upstream changes
+        id: merge
+        shell: bash
         run: |
+          set -euo pipefail
           git checkout main
+
           if [ "$(git rev-parse main)" = "$(git rev-parse upstream/main)" ]; then
             echo "Already up to date. Nothing to push."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Fork policy: this fork owns README.md (a barebones GPU-focused
-          # readme). Merge with --no-commit, then force the fork's README back
-          # in whether the merge conflicted on it or auto-merged cleanly, so
-          # upstream's version can never win here. Other fork-only files (the
-          # added workflows) have no upstream counterpart, so they cannot
-          # conflict. If any other file genuinely conflicts, the commit below
-          # fails and the run goes red for a human to resolve.
+
+          # Fork policy: this repository owns README.md (a barebones GPU-focused
+          # readme) and upstream owns everything else, including the release
+          # workflow. Merge without committing, force the fork's README back in
+          # whether the merge conflicted on it or auto-merged cleanly (so
+          # upstream's version can never win here), then take upstream's
+          # publish.yml as-is and let script/fork_policy.py re-apply the fork
+          # guard. Any OTHER conflicted file is a real one: abort and go red for
+          # a human instead of guessing.
           git merge upstream/main --no-edit --no-commit || true
+
           git checkout HEAD -- README.md
           git add README.md
+
+          unresolved=""
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            if [ "$file" = ".github/workflows/publish.yml" ]; then
+              git checkout --theirs -- "$file"
+              git add -- "$file"
+            else
+              unresolved="$unresolved $file"
+            fi
+          done < <(git diff --name-only --diff-filter=U)
+
+          if [ -n "$unresolved" ]; then
+            echo "::error::Merge conflict outside the fork-owned workflow files:$unresolved"
+            git merge --abort
+            exit 1
+          fi
+
+          python3 script/fork_policy.py
+          git add .github/workflows/publish.yml
+
           git commit --no-edit
-          git push origin main
-          git push origin --tags || true
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          git log --oneline -1
+
+      - name: Push main
+        if: steps.merge.outputs.changed == 'true'
+        run: git push origin main
+
+      - name: Push tags
+        # A tag upstream moved (or one this fork already pushed) must not block
+        # the image build, so a rejected tag is a warning here, not a failure.
+        if: steps.merge.outputs.changed == 'true'
+        continue-on-error: true
+        run: git push origin --tags
+
+      - name: Build and push images
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The push above used GITHUB_TOKEN, so it did not start build-gpu.yml.
+          # Dispatch it explicitly: the workflow checks out main (the merge
+          # commit) and only publishes after its own test job passes.
+          gh workflow run build-gpu.yml --ref main
+          sleep 10
+          gh run list --workflow build-gpu.yml --limit 3

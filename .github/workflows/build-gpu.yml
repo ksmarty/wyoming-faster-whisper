@@ -21,7 +21,15 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/wyoming-whisper-gpu
 
 jobs:
+  # Gate the publish on the same suite upstream runs, so an image tagged
+  # `latest` never comes from a tree that fails its tests. The sync workflow
+  # dispatches this workflow, which makes this the only test run on a synced
+  # main (pushes made with GITHUB_TOKEN do not trigger workflows).
+  test:
+    uses: ./.github/workflows/test.yml
+
   build-gpu:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

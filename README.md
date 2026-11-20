@@ -6,6 +6,18 @@ to GitHub Container Registry. Everything else — models, options, environment
 variables, Home Assistant name biasing — is documented in the
 [original README](https://github.com/OHF-Voice/wyoming-faster-whisper#readme).
 
+## Sync and image builds
+
+Two workflows keep this fork current without manual steps:
+
+- **Sync Upstream** (`.github/workflows/sync-upstream.yml`, daily) merges
+  `OHF-Voice/wyoming-faster-whisper` into `main`, keeps this README, and
+  re-applies the fork guard in `publish.yml` via `script/fork_policy.py`.
+- **Build and Push GPU Image** (`.github/workflows/build-gpu.yml`) runs the
+  upstream test suite, then publishes `ghcr.io/ksmarty/wyoming-whisper-gpu`
+  (`latest`, the version, and the commit sha). The sync workflow dispatches it,
+  because a push made with `GITHUB_TOKEN` does not trigger workflows.
+
 ## Run the GPU version
 
 Pull the prebuilt image (built from `Dockerfile.gpu` by the

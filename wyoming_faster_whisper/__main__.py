@@ -13,6 +13,7 @@ from wyoming.server import AsyncServer, AsyncTcpServer
 
 from . import __version__
 from .const import AUTO_LANGUAGE, AUTO_MODEL, HASS_API_URL, SttLibrary, base_language
+from .cpu import default_cpu_threads
 from .dispatch_handler import DispatchEventHandler
 from .env_args import ENV_PREFIX
 from .env_args import parse_args as parse_args_with_env
@@ -88,6 +89,11 @@ def get_parser() -> argparse.ArgumentParser:
         "defaults to float16 on CUDA and to the model's own type on CPU",
     )
     parser.add_argument(
+        "--onnx-quantization",
+        help="Model quantization for onnx-asr (int8, etc.; default: model's "
+        "unquantized weights)",
+    )
+    parser.add_argument(
         "--beam-size",
         type=int,
         default=0,
@@ -95,9 +101,11 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--cpu-threads",
-        default=4,
+        default=0,
         type=int,
-        help="Number of CPU threads to use for inference (default: 4, faster-whisper, sherpa-onnx, and qwen3-asr)",
+        help="Number of CPU threads to use for inference (0 for auto: one per "
+        "physical CPU core available; faster-whisper, sherpa-onnx, qwen3-asr, "
+        "and funasr)",
     )
     parser.add_argument(
         "--initial-prompt",
@@ -171,6 +179,15 @@ def get_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use sherpa-onnx OnlineRecognizer for true streaming transcription "
         "(sherpa only; requires a streaming model, e.g. a streaming zipformer)",
+    )
+    parser.add_argument(
+        "--qwen3-asr-streaming",
+        action="store_true",
+        help="Transcribe while audio arrives: decode again every 2 seconds, "
+        "checking the previous pass's transcript as a draft, which cuts latency "
+        "after the audio stops at the cost of CPU while the speaker is talking; "
+        "with --vad-clip, the final pass starts as soon as the speaker stops "
+        "(qwen3-asr only)",
     )
     parser.add_argument(
         "--local-files-only",
@@ -255,6 +272,10 @@ async def main() -> None:
         args.beam_size = 1 if is_arm else 5
         _LOGGER.debug("Beam size automatically selected: %s", args.beam_size)
 
+    if args.cpu_threads <= 0:
+        args.cpu_threads = default_cpu_threads()
+        _LOGGER.debug("CPU threads automatically selected: %s", args.cpu_threads)
+
     # Resolve model name
     model_name = args.model
     model_match = re.match(r"^(tiny|base|small|medium)[.-]int8$", args.model)
@@ -286,6 +307,7 @@ async def main() -> None:
         local_files_only=args.local_files_only,
         model=args.model,
         compute_type=args.compute_type,
+        onnx_quantization=args.onnx_quantization,
         device=args.device,
         beam_size=args.beam_size,
         cpu_threads=args.cpu_threads,
@@ -293,6 +315,7 @@ async def main() -> None:
         vad_parameters=vad_parameters,
         whisper_task=args.whisper_task,
         sherpa_streaming=args.sherpa_streaming,
+        qwen3_asr_streaming=args.qwen3_asr_streaming,
         vad_clip=vad_clip,
         vad_clip_threshold=args.vad_clip_threshold,
         vad_clip_pad_ms=args.vad_clip_pad_ms,

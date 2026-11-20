@@ -96,6 +96,12 @@ class DispatchEventHandler(AsyncEventHandler):
             # started again.
             self._refresh_names()
 
+            if self._language is None:
+                # Transcribe is optional, so a client may send only audio. The
+                # backend is chosen for --language either way; the transcriber
+                # has to be told it too, or it auto-detects.
+                self._language = self._loader.preferred_language
+
             if (self._transcriber is None) and (self._transcriber_future is None):
                 # Load the transcriber in the background.
                 # Hopefully it's ready by the time the audio stops.
@@ -201,7 +207,8 @@ class DispatchEventHandler(AsyncEventHandler):
             # Optionally clip leading/trailing silence before transcription.
             # This operates on the WAV, so any batch transcriber can use it;
             # --vad-clip decides which libraries actually do. Streaming
-            # transcribers never reach this path.
+            # transcribers never reach this path; a streaming backend that
+            # supports --vad-clip applies it in its own session.
             wav_path = self._wav_path
             if self._loader.should_vad_clip(self._language) and await asyncio.to_thread(
                 clip_wav_to_speech,
