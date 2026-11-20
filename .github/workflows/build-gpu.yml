@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - main
+    # Documentation and workflow-only pushes cannot change the image, so they
+    # skip the build. Path filters are not evaluated for tag pushes, so a
+    # release tag still builds. A dispatch ignores them too.
+    paths-ignore:
+      - "**.md"
+      - ".github/workflows/**"
+      - "script/fork_policy.py"
     tags:
       - "v*.*.*"
   workflow_dispatch:
